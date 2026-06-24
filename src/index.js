@@ -8,6 +8,7 @@ import authRoutes from "./modules/auth/auth.routes.js";
 import learnerRoutes from "./modules/learner/learner.routes.js";
 import adminRoutes from "./modules/admin/admin.routes.js";
 import trainerRoutes from "./modules/trainer/trainer.routes.js";
+import ordersRoutes from "./modules/orders/orders.routes.js";
 import { notFound, errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -30,6 +31,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/learner", learnerRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/trainer", trainerRoutes);
+app.use("/api/orders", ordersRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

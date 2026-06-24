@@ -26,6 +26,10 @@ const schema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
   COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
   COOKIE_SECURE: boolFromEnv.default(false),
+
+  // Defaults for fields the xCRM order payload does not carry
+  SCHEDULE_DEFAULT_CAPACITY: z.coerce.number().int().positive().default(30),
+  SCHEDULE_DEFAULT_MIN_SEATS: z.coerce.number().int().positive().default(1),
 });
 
 const parsed = schema.safeParse(process.env);
