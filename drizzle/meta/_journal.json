@@ -8,6 +8,13 @@
       "when": 1782197688332,
       "tag": "0000_thin_scorpion",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782277126627,
+      "tag": "0001_faithful_marvex",
+      "breakpoints": true
     }
   ]
 }
