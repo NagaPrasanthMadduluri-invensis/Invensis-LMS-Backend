@@ -20,6 +20,8 @@ const schema = z.object({
 
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
+  // Shared secret for HMAC-signed integration requests (xCRM → POST /api/orders)
+  ORDER_HMAC_SECRET: z.string().min(16),
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL: z.string().default("7d"),
 

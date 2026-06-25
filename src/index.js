@@ -19,7 +19,8 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
-app.use(express.json());
+// Capture the raw body so HMAC signatures can be verified over exact bytes.
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 app.use(pinoHttp());
 

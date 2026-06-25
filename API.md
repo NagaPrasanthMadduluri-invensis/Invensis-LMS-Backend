@@ -139,7 +139,7 @@ Liveness check. No auth.
 
 ## 3. Training, admin & trainer endpoints
 
-All require `Authorization: Bearer <accessToken>` and are **role-gated**, with extra ownership checks noted per endpoint.
+§3.1–3.3 require a **Bearer access token** and are **role-gated** (with extra ownership checks noted per endpoint). §3.4 (`POST /api/orders`) is a machine integration and uses **HMAC request signing** instead — no user token.
 
 ### 3.1 `GET /api/learner/training/:trainingId`
 
@@ -232,9 +232,9 @@ Lets the **assigned trainer** set/update a session's planned topics.
 
 Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, sessions, participants, and enrolments.
 
-> **Server-to-server / integration endpoint** — called by the CRM (or a service) holding an **admin** token, *not* by the browser frontend. Documented here as part of the single API contract.
+> **Server-to-server / integration endpoint** — called by the CRM (or a service), *not* by the browser frontend. Authenticated with an **HMAC signature**, not a user token.
 
-- **Auth:** Bearer access token · role `admin`
+- **Auth:** HMAC-SHA256 signature (no login/JWT). Send `X-Signature: sha256=<hex>`, where `<hex>` = `HMAC_SHA256(rawBody, ORDER_HMAC_SECRET)` (a secret shared with the CRM). The server recomputes the HMAC over the exact received body and compares it timing-safely.
 - **Body:** the confirmed `order.paid` payload (see `crm_api.md` §3). Consumed fields:
   - `order_id` (string) — also the **idempotency key**
   - `order.payment_status` — must be `"paid"` (otherwise `422`); `order.purchase_type` derives the bucket
@@ -242,6 +242,17 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
   - `learners[]` — each requires `email` (plus optional name/phone)
   - `schedule` — `schedule_id`, `start_date`, `end_date`, `start_time`, `end_time`, `session_dates[]` (plus optional `batch_type`, `delivery_format`, `venue`, `timezone`, …)
   - Extra fields are accepted and stored for traceability.
+- **Signing example (Node):**
+  ```js
+  import crypto from "node:crypto";
+  const body = JSON.stringify(order);            // the exact bytes you will send
+  const sig = "sha256=" + crypto
+    .createHmac("sha256", process.env.ORDER_HMAC_SECRET)
+    .update(body)
+    .digest("hex");
+  // fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Signature": sig }, body })
+  ```
+  > Sign the **exact raw bytes** you send. Re-serializing differently on each side will make the signature mismatch.
 - **Behavior:** **idempotent** — creates or reuses the schedule + Training ID (`TRN-YYYY-NNNN`) + day-wise sessions, upserts participants by email, and inserts confirmed enrolments. Re-posting the same order changes nothing.
 - **`201` response:**
   ```json
@@ -258,7 +269,7 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
     }
   }
   ```
-- **Errors:** `401` no/invalid token · `403` not an admin · `422` `payment_status` not `paid`, or invalid body
+- **Errors:** `401` missing/invalid signature · `422` `payment_status` not `paid`, or invalid body
 
 ---
 
