@@ -32,6 +32,10 @@ const schema = z.object({
   // Defaults for fields the xCRM order payload does not carry
   SCHEDULE_DEFAULT_CAPACITY: z.coerce.number().int().positive().default(30),
   SCHEDULE_DEFAULT_MIN_SEATS: z.coerce.number().int().positive().default(1),
+
+  // Placeholder password for learner accounts auto-created from CRM orders
+  // (until the account-setup email flow exists)
+  DEFAULT_PARTICIPANT_PASSWORD: z.string().min(8).default("Welcome@123"),
 });
 
 const parsed = schema.safeParse(process.env);

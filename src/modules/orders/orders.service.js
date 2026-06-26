@@ -12,6 +12,7 @@ import {
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
+import { hashPassword } from "../../lib/password.js";
 
 const DELIVERY_MODE = {
   live_virtual: "virtual",
@@ -160,34 +161,47 @@ export async function ingestOrder(actorId, payload, ip) {
       .returning();
 
     /* ── 4. Participants + enrolments (idempotent) ── */
+    // Placeholder password for auto-created learner accounts. A future email
+    // flow will let learners set their own; hashed once and reused per order.
+    const defaultPasswordHash = await hashPassword(env.DEFAULT_PARTICIPANT_PASSWORD);
+
     let newEnrolments = 0;
     for (const l of payload.learners) {
-      const [linkedUser] = await tx
+      const name = learnerName(l);
+
+      // Find or create the learner's user account.
+      let [user] = await tx
         .select({ id: users.id })
         .from(users)
         .where(eq(users.email, l.email))
         .limit(1);
+      if (!user) {
+        [user] = await tx
+          .insert(users)
+          .values({
+            email: l.email,
+            name,
+            role: "learner",
+            passwordHash: defaultPasswordHash,
+          })
+          .returning({ id: users.id });
+      }
 
+      // Upsert the participant, linked to that user account.
       let [participant] = await tx
         .select()
         .from(participants)
         .where(eq(participants.email, l.email))
         .limit(1);
-
       if (!participant) {
         [participant] = await tx
           .insert(participants)
-          .values({
-            userId: linkedUser?.id ?? null,
-            name: learnerName(l),
-            email: l.email,
-            phone: l.phone ?? null,
-          })
+          .values({ userId: user.id, name, email: l.email, phone: l.phone ?? null })
           .returning();
-      } else if (linkedUser && !participant.userId) {
+      } else if (!participant.userId) {
         await tx
           .update(participants)
-          .set({ userId: linkedUser.id })
+          .set({ userId: user.id })
           .where(eq(participants.id, participant.id));
       }
 
