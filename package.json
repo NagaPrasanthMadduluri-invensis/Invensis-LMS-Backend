@@ -11,7 +11,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "node src/db/seed.js",
-    "db:seed:training": "node src/db/seed-training.js"
+    "db:seed:training": "node src/db/seed-training.js",
+    "db:dedupe-emails": "node src/db/dedupe-emails.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

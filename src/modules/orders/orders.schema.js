@@ -7,7 +7,7 @@ const learnerSchema = z
     name: z.string().optional(),
     first_name: z.string().optional(),
     last_name: z.string().optional(),
-    email: z.string().email(),
+    email: z.string().trim().toLowerCase().email(),
     phone: z.string().optional(),
   })
   .passthrough();
@@ -54,7 +54,7 @@ export const orderIntakeSchema = z
         first_name: z.string().optional(),
         last_name: z.string().optional(),
         name: z.string().optional(),
-        email: z.string().email(),
+        email: z.string().trim().toLowerCase().email(),
         phone: z.string().optional(),
         company_name: z.string().optional(),
       })

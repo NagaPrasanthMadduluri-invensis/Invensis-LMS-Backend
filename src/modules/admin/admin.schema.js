@@ -13,7 +13,7 @@ export const updateTrainingSchema = z
 
 export const addParticipantSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
-  email: z.string().trim().email(),
+  email: z.string().trim().toLowerCase().email(),
   phone: z.string().trim().min(1).optional(),
   job_title: z.string().trim().min(1).optional(),
 });
