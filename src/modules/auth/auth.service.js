@@ -9,6 +9,7 @@ import {
 } from "../../lib/jwt.js";
 import { tokenStore } from "../../lib/token-store.js";
 import { AppError } from "../../lib/errors.js";
+import { resolveCapabilities } from "../../lib/capabilities.js";
 
 async function findByEmail(email) {
   const [user] = await db
@@ -45,6 +46,7 @@ export async function login({ email, password }) {
     user: publicUser(user),
     accessToken: signAccessToken(user),
     refresh: signRefreshToken(user),
+    capabilities: await resolveCapabilities(user),
   };
 }
 
@@ -77,6 +79,7 @@ export async function refresh(refreshToken) {
     user: publicUser(user),
     accessToken: signAccessToken(user),
     refresh: signRefreshToken(user),
+    capabilities: await resolveCapabilities(user),
   };
 }
 
@@ -97,5 +100,8 @@ export async function logout(refreshToken) {
 export async function me(userId) {
   const user = await findById(userId);
   if (!user) throw new AppError("User not found", 404);
-  return publicUser(user);
+  return {
+    user: publicUser(user),
+    capabilities: await resolveCapabilities(user),
+  };
 }

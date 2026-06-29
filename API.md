@@ -68,7 +68,35 @@ Returned by `login`, `refresh`, and `me`. This is the full public shape (no secr
 }
 ```
 
-`role` is one of: **`admin` · `trainer` · `sponsor` · `learner`** — use it to gate UI and route the user to the correct portal.
+`role` is one of: **`admin` · `trainer` · `sponsor` · `learner`**. Treat it as the user's **default landing portal** — but to decide *which features/nav to show*, use `capabilities` (next section), **not** `role` alone.
+
+### 1.5 Capabilities & access (read this — important)
+
+`login`, `refresh`, and `me` all return a **`capabilities`** object alongside `user`:
+
+```json
+"capabilities": { "admin": false, "trainer": false, "sponsor": true, "learner": true }
+```
+
+**Why it exists:** one account can be more than one thing. The most common case — a person buys a course **for themselves** — makes them both the **sponsor** (paid, sees invoices) *and* a **learner** (attends, sees course content). A single `role` can't express that, so we derive capability flags from the account's actual relationships:
+
+| Flag | `true` when the account… | Grants (frontend) |
+|---|---|---|
+| `admin` | has the admin role | Admin TMS |
+| `trainer` | has a trainer profile | Trainer portal (assigned sessions, attendance) |
+| `sponsor` | is the **buyer** of ≥1 order | Sponsor portal (invoices/receipts, manage its learners) |
+| `learner` | has ≥1 confirmed **enrolment** | Learner portal (course, sessions, meeting link, surveys, support) |
+
+**How to use it:**
+- **Route** to the default portal by `user.role` after login.
+- **Render nav / guard sections** by `capabilities`, not `role`. Show a "Sponsor / Invoices" area whenever `capabilities.sponsor` is `true`, learner content whenever `capabilities.learner` is `true`, etc. A self-buyer (`role: "learner"` with `sponsor: true, learner: true`) then sees **both**.
+
+**⚠️ Capabilities can change after login.** They are a **snapshot** computed at response time and are deliberately **not** baked into the access token (a learner can later become a sponsor by buying another seat; a new enrolment can arrive from the CRM mid-session). Therefore:
+- Don't treat the login-time capabilities as permanent — they can grow/change.
+- Re-read them whenever you refresh state: **every `refresh` and every `me` returns the current set.** Calling `GET /api/auth/me` on app load (and after actions that might change access) is the reliable way to stay current.
+- You **cannot** infer capabilities by decoding the JWT — they aren't in it. Always read them from the response body.
+
+**Security note:** these flags are a **UI convenience, not the security boundary.** The backend independently enforces access on every request (e.g. the learner training view re-checks enrolment ownership server-side). Hiding a button is not protection — unauthorized calls are still rejected with `401`/`403`.
 
 ---
 
@@ -88,7 +116,8 @@ Authenticate with email + password.
   ```json
   {
     "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true },
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false }
   }
   ```
 - **Errors:** `401` invalid credentials · `403` inactive account · `422` bad body · `429` too many attempts
@@ -100,11 +129,12 @@ Exchange the refresh cookie for a new access token (and a rotated refresh cookie
 - **Auth:** the `refresh_token` cookie (sent automatically by the browser)
 - **Credentials:** `include` (required — otherwise the cookie isn't sent)
 - **Body:** none
-- **`200` response** (same shape as login; sets a new `refresh_token` cookie):
+- **`200` response** (same shape as login — incl. fresh `capabilities`; sets a new `refresh_token` cookie):
   ```json
   {
     "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true },
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false }
   }
   ```
 - **Errors:** `401` if the cookie is missing, expired, revoked (e.g. already rotated or logged out), or the account is inactive.
@@ -123,9 +153,12 @@ Revoke the current refresh token and clear the cookie.
 Get the currently authenticated user.
 
 - **Auth:** `Authorization: Bearer <accessToken>`
-- **`200` response:**
+- **`200` response** (use this to refresh capabilities — see §1.5):
   ```json
-  { "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true } }
+  {
+    "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true },
+    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false }
+  }
   ```
 - **Errors:** `401` missing/invalid/expired access token · `404` user no longer exists
 
@@ -240,6 +273,7 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
   - `order.payment_status` — must be `"paid"` (otherwise `422`); `order.purchase_type` derives the bucket
   - `course.course_name`
   - `learners[]` — each requires `email` (plus optional name/phone)
+  - `buyer` (optional) — the order's **sponsor**; needs `email` (plus optional `first_name`/`last_name`/`name`/`phone`/`company_name`)
   - `schedule` — `schedule_id`, `start_date`, `end_date`, `start_time`, `end_time`, `session_dates[]` (plus optional `batch_type`, `delivery_format`, `venue`, `timezone`, …)
   - Extra fields are accepted and stored for traceability.
 - **Signing example (Node):**
@@ -254,6 +288,7 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
   ```
   > Sign the **exact raw bytes** you send. Re-serializing differently on each side will make the signature mismatch.
 - **Behavior:** **idempotent** — creates or reuses the schedule + Training ID (`TRN-YYYY-NNNN`) + day-wise sessions, upserts participants by email, and inserts confirmed enrolments. Re-posting the same order changes nothing.
+- **Accounts:** each learner gets a `users` account (role `learner`); the `buyer` gets one too (role `sponsor`, unless that email already belongs to a learner — then it stays one account that is both) and is linked as the order's sponsor. All use a placeholder password until the setup-email flow exists.
 - **`201` response:**
   ```json
   {
@@ -265,7 +300,8 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
       "training_created": true,
       "participants": 1,
       "new_enrolments": 1,
-      "enrolled_count": 1
+      "enrolled_count": 1,
+      "sponsor_email": "buyer@example.com"
     }
   }
   ```
@@ -351,12 +387,27 @@ api.interceptors.response.use(
 
 > ⚠️ CORS: the backend allows the origin in `CORS_ORIGIN` (dev: `http://localhost:3000`) with `credentials: true`. The frontend origin must match exactly, and cross-origin requests **must** send credentials, or the refresh cookie will be silently dropped.
 
-### 4.4 Gating by role
+### 4.4 Routing & nav (role + capabilities)
+
+Route to the default portal by `role`; show/hide nav by `capabilities` (§1.5):
 
 ```js
+// after login / refresh / me you have { user, capabilities }
+
+// 1) default landing portal
 const PORTAL_HOME = { admin: "/admin", trainer: "/trainer", sponsor: "/sponsor", learner: "/learner" };
 router.push(PORTAL_HOME[user.role] ?? "/learner");
+
+// 2) which sections to render (an account can have several)
+const nav = [];
+if (capabilities.admin)   nav.push("admin");
+if (capabilities.trainer) nav.push("trainer");
+if (capabilities.sponsor) nav.push("sponsor");   // Invoices / my learners
+if (capabilities.learner) nav.push("learner");   // Course / sessions / surveys
+// e.g. a self-buyer lands on /learner but also sees the Sponsor tab.
 ```
+
+Re-fetch `capabilities` from `GET /api/auth/me` on app load (and after actions that may change access) — they can change after login (§1.5).
 
 ---
 
