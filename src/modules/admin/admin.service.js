@@ -1,9 +1,32 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
-import { trainingIds, trainers, trainerAssignments, enrolments } from "../../db/schema.js";
+import { env } from "../../config/env.js";
+import {
+  trainingIds,
+  trainers,
+  trainerAssignments,
+  enrolments,
+  schedules,
+  participants,
+  users,
+} from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
+import { hashPassword } from "../../lib/password.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
+
+// Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolveTraining(runner, ref) {
+  const [training] = await runner
+    .select()
+    .from(trainingIds)
+    .where(UUID_RE.test(ref) ? eq(trainingIds.id, ref) : eq(trainingIds.code, ref))
+    .limit(1);
+  if (!training) throw new AppError("Training not found", 404);
+  return training;
+}
 
 function publicTraining(t) {
   return {
@@ -21,14 +44,10 @@ function publicTraining(t) {
   };
 }
 
-export async function updateTraining(adminId, trainingId, body, ip) {
+export async function updateTraining(adminId, trainingRef, body, ip) {
   return db.transaction(async (tx) => {
-    const [training] = await tx
-      .select()
-      .from(trainingIds)
-      .where(eq(trainingIds.id, trainingId))
-      .limit(1);
-    if (!training) throw new AppError("Training not found", 404);
+    const training = await resolveTraining(tx, trainingRef);
+    const trainingId = training.id;
 
     /* ── Assign trainer ── */
     if (body.trainer_id) {
@@ -142,5 +161,272 @@ export async function updateTraining(adminId, trainingId, body, ip) {
       .where(eq(trainingIds.id, trainingId))
       .limit(1);
     return publicTraining(updated);
+  });
+}
+
+/* ── List all trainings (Training IDs) for the admin courses view ── */
+export async function listTrainings() {
+  const rows = await db
+    .select({
+      id: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      status: trainingIds.status,
+      deliveryMode: trainingIds.deliveryMode,
+      bucket: trainingIds.bucket,
+      capacity: trainingIds.capacity,
+      enrolledCount: trainingIds.enrolledCount,
+      minSeats: trainingIds.minSeats,
+      createdAt: trainingIds.createdAt,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      durationHours: schedules.durationHours,
+      timezone: schedules.timezone,
+      trainerName: users.name,
+    })
+    .from(trainingIds)
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(
+      trainerAssignments,
+      and(
+        eq(trainerAssignments.trainingId, trainingIds.id),
+        isNull(trainerAssignments.removedAt)
+      )
+    )
+    .leftJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
+    .leftJoin(users, eq(trainers.userId, users.id))
+    .orderBy(desc(trainingIds.createdAt));
+
+  return {
+    trainings: rows.map((r) => ({
+      id: r.id,
+      code: r.code,
+      title: r.title,
+      status: r.status,
+      delivery_mode: r.deliveryMode,
+      bucket: r.bucket,
+      capacity: r.capacity,
+      enrolled_count: r.enrolledCount,
+      min_seats: r.minSeats,
+      start_date: r.startDate,
+      end_date: r.endDate,
+      duration_hours: r.durationHours,
+      timezone: r.timezone,
+      trainer_assigned: r.trainerName != null,
+      trainer_name: r.trainerName ?? null,
+    })),
+  };
+}
+
+/* ── Full training detail for admin: schedule + trainer + participants ── */
+export async function getTrainingDetail(trainingRef) {
+  const training = await resolveTraining(db, trainingRef);
+
+  let schedule = null;
+  if (training.scheduleId) {
+    [schedule] = await db
+      .select({
+        durationHours: schedules.durationHours,
+        capacity: schedules.capacity,
+        minSeats: schedules.minSeats,
+        batchType: schedules.batchType,
+        startDate: schedules.startDate,
+        endDate: schedules.endDate,
+        startTime: schedules.startTime,
+        endTime: schedules.endTime,
+        sessionDates: schedules.sessionDates,
+        timezone: schedules.timezone,
+        venue: schedules.venue,
+      })
+      .from(schedules)
+      .where(eq(schedules.id, training.scheduleId))
+      .limit(1);
+  }
+
+  const [trainer] = await db
+    .select({
+      id: trainers.id,
+      name: users.name,
+      email: users.email,
+      bio: trainers.bio,
+      experience: trainers.experience,
+      assignedAt: trainerAssignments.assignedAt,
+    })
+    .from(trainerAssignments)
+    .innerJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(
+      and(eq(trainerAssignments.trainingId, training.id), isNull(trainerAssignments.removedAt))
+    )
+    .limit(1);
+
+  const enrolled = await db
+    .select({
+      enrolmentId: enrolments.id,
+      status: enrolments.status,
+      enrolledAt: enrolments.enrolledAt,
+      orderId: enrolments.orderId,
+      participantId: participants.id,
+      name: participants.name,
+      email: participants.email,
+      phone: participants.phone,
+      jobTitle: participants.jobTitle,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .where(eq(enrolments.trainingId, training.id))
+    .orderBy(desc(enrolments.enrolledAt));
+
+  return {
+    id: training.id,
+    training_id: training.code,
+    title: training.title,
+    delivery_mode: training.deliveryMode,
+    bucket: training.bucket,
+    status: training.status,
+    capacity: schedule?.capacity ?? training.capacity,
+    min_seats: schedule?.minSeats ?? training.minSeats,
+    enrolled_count: training.enrolledCount,
+    duration_hours: schedule?.durationHours ?? null,
+    batch_type: schedule?.batchType ?? null,
+    timezone: schedule?.timezone ?? null,
+    start_date: schedule?.startDate ?? null,
+    end_date: schedule?.endDate ?? null,
+    start_time: schedule?.startTime ?? null,
+    end_time: schedule?.endTime ?? null,
+    session_dates: schedule?.sessionDates ?? null,
+    venue: schedule?.venue ?? null,
+    trainer: trainer
+      ? {
+          id: trainer.id,
+          name: trainer.name,
+          email: trainer.email,
+          bio: trainer.bio,
+          experience: trainer.experience,
+          assigned_at: trainer.assignedAt,
+        }
+      : null,
+    participants: enrolled.map((e) => ({
+      enrolment_id: e.enrolmentId,
+      participant_id: e.participantId,
+      name: e.name,
+      email: e.email,
+      phone: e.phone,
+      job_title: e.jobTitle,
+      status: e.status,
+      enrolled_at: e.enrolledAt,
+      added_manually: e.orderId == null,
+    })),
+  };
+}
+
+/* ── Active trainers for the assignment picker ── */
+export async function listTrainers() {
+  const rows = await db
+    .select({
+      id: trainers.id,
+      name: users.name,
+      email: users.email,
+      bio: trainers.bio,
+      experience: trainers.experience,
+    })
+    .from(trainers)
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(eq(trainers.isActive, true))
+    .orderBy(users.name);
+
+  return { trainers: rows };
+}
+
+/* ── Manually add a participant + confirmed enrolment to a training ── */
+export async function addParticipant(adminId, trainingRef, body, ip) {
+  return db.transaction(async (tx) => {
+    const training = await resolveTraining(tx, trainingRef);
+
+    if (training.capacity != null && training.enrolledCount >= training.capacity) {
+      throw new AppError("Training is at full capacity", 422);
+    }
+
+    const email = body.email.trim().toLowerCase();
+    const name = body.name.trim();
+
+    // Find or create the learner's user account.
+    let [user] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    if (!user) {
+      const passwordHash = await hashPassword(env.DEFAULT_PARTICIPANT_PASSWORD);
+      [user] = await tx
+        .insert(users)
+        .values({ email, name, role: "learner", passwordHash })
+        .returning({ id: users.id });
+    }
+
+    // Upsert the participant, linked to that user account.
+    let [participant] = await tx
+      .select()
+      .from(participants)
+      .where(eq(participants.email, email))
+      .limit(1);
+    if (!participant) {
+      [participant] = await tx
+        .insert(participants)
+        .values({
+          userId: user.id,
+          name,
+          email,
+          phone: body.phone ?? null,
+          jobTitle: body.job_title ?? null,
+        })
+        .returning();
+    } else if (!participant.userId) {
+      await tx.update(participants).set({ userId: user.id }).where(eq(participants.id, participant.id));
+    }
+
+    // Insert the enrolment; the partial unique index blocks a duplicate active one.
+    const inserted = await tx
+      .insert(enrolments)
+      .values({ trainingId: training.id, participantId: participant.id, status: "confirmed" })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted.length === 0) {
+      throw new AppError("Participant is already enrolled in this training", 409);
+    }
+
+    // Refresh enrolled_count from live confirmed rows.
+    const cnt = await tx.execute(
+      sql`SELECT count(*)::int AS n FROM enrolments WHERE training_id = ${training.id} AND status = 'confirmed'`
+    );
+    const enrolledCount = cnt.rows?.[0]?.n ?? 0;
+    await tx
+      .update(trainingIds)
+      .set({ enrolledCount, updatedAt: new Date() })
+      .where(eq(trainingIds.id, training.id));
+
+    await writeAudit(tx, {
+      entityType: "enrolment",
+      entityId: inserted[0].id,
+      action: "participant_added_manually",
+      actorId: adminId,
+      after: { email, name, training_code: training.code },
+      ipAddress: ip,
+    });
+
+    return {
+      participant: {
+        enrolment_id: inserted[0].id,
+        participant_id: participant.id,
+        name,
+        email,
+        phone: body.phone ?? null,
+        job_title: body.job_title ?? null,
+        status: "confirmed",
+        enrolled_at: inserted[0].enrolledAt,
+        added_manually: true,
+      },
+      enrolled_count: enrolledCount,
+    };
   });
 }
