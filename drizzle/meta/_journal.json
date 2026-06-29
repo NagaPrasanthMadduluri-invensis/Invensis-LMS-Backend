@@ -22,6 +22,13 @@
       "when": 1782282668285,
       "tag": "0002_sweet_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782711817683,
+      "tag": "0003_bumpy_satana",
+      "breakpoints": true
     }
   ]
 }

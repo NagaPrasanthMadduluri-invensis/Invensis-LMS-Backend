@@ -173,6 +173,7 @@ export const orders = pgTable("orders", {
   id: uuid("id").primaryKey().default(sql`uuidv7()`),
   externalOrderId: text("external_order_id").notNull().unique(), // INV-20260608-VE2Q3H
   customerId: text("customer_id"),
+  sponsorUserId: uuid("sponsor_user_id").references(() => users.id), // the buyer
   courseName: text("course_name"),
   paymentStatus: text("payment_status").notNull(),
   scheduleId: uuid("schedule_id").references(() => schedules.id),

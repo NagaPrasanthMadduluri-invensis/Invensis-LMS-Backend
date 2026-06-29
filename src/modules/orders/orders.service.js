@@ -218,6 +218,37 @@ export async function ingestOrder(actorId, payload, ip) {
       if (inserted.length > 0) newEnrolments += 1;
     }
 
+    /* ── 4b. Sponsor (buyer): create/reuse account + link to the order ──
+       Runs AFTER learners so a buyer who is also a learner keeps the learner
+       role (their sponsor capability comes from the order link, not the role). */
+    const buyer = payload.buyer;
+    if (buyer?.email) {
+      const buyerName =
+        buyer.name || `${buyer.first_name ?? ""} ${buyer.last_name ?? ""}`.trim() || buyer.email;
+
+      let [sponsorUser] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, buyer.email))
+        .limit(1);
+      if (!sponsorUser) {
+        [sponsorUser] = await tx
+          .insert(users)
+          .values({
+            email: buyer.email,
+            name: buyerName,
+            role: "sponsor",
+            passwordHash: defaultPasswordHash,
+          })
+          .returning({ id: users.id });
+      }
+
+      await tx
+        .update(orders)
+        .set({ sponsorUserId: sponsorUser.id, updatedAt: new Date() })
+        .where(eq(orders.id, order.id));
+    }
+
     /* ── 5. Refresh enrolled_count from live rows ── */
     const cnt = await tx.execute(
       sql`SELECT count(*)::int AS n FROM enrolments WHERE training_id = ${training.id} AND status = 'confirmed'`
@@ -245,6 +276,7 @@ export async function ingestOrder(actorId, payload, ip) {
       participants: payload.learners.length,
       new_enrolments: newEnrolments,
       enrolled_count: cnt.rows?.[0]?.n ?? 0,
+      sponsor_email: payload.buyer?.email ?? null,
     };
   });
 }
