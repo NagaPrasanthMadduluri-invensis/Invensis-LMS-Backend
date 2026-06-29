@@ -10,3 +10,10 @@ export const updateTrainingSchema = z
   .refine((d) => Object.keys(d).length > 0, {
     message: "Provide trainer_id and/or meeting fields",
   });
+
+export const addParticipantSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  email: z.string().trim().email(),
+  phone: z.string().trim().min(1).optional(),
+  job_title: z.string().trim().min(1).optional(),
+});

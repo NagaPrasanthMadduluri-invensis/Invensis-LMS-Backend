@@ -174,9 +174,9 @@ Liveness check. No auth.
 
 §3.1–3.3 require a **Bearer access token** and are **role-gated** (with extra ownership checks noted per endpoint). §3.4 (`POST /api/orders`) is a machine integration and uses **HMAC request signing** instead — no user token.
 
-### 3.1 `GET /api/learner/training/:trainingId`
+### 3.1 `GET /api/learner/training/:trainingRef`
 
-Full training detail for the authenticated **learner**, who must have a **confirmed enrolment** in this training.
+Full training detail for the authenticated **learner**, who must have a **confirmed enrolment** in this training. `:trainingRef` may be the training **UUID** or its human **code** (e.g. `TRN-2026-0001`).
 
 - **Auth:** Bearer access token · role `learner`
 - **`200` response:**
@@ -187,6 +187,18 @@ Full training detail for the authenticated **learner**, who must have a **confir
     "delivery_mode": "virtual",
     "bucket": "direct_online",
     "status": "active",
+    "duration_hours": 32,
+    "capacity": 20,
+    "min_seats": 1,
+    "enrolled_count": 0,
+    "batch_type": "weekday",
+    "timezone": "Asia/Kolkata",
+    "start_date": "2026-09-15",
+    "end_date": "2026-09-18",
+    "start_time": "09:00:00",
+    "end_time": "17:00:00",
+    "session_dates": ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"],
+    "venue": null,
     "trainer": { "name": "Trainer User", "bio": "PMP-certified trainer", "experience": "10 years" },
     "sessions": [
       {
@@ -202,11 +214,12 @@ Full training detail for the authenticated **learner**, who must have a **confir
   }
   ```
 - **Field notes (important for rendering):**
+  - The schedule block (`duration_hours`, `batch_type`, `timezone`, `start_date`/`end_date`, `start_time`/`end_time`, `session_dates`, `venue`) comes from the linked **schedule offering**; these are `null` when the training has no linked schedule (manually-created). `capacity`/`min_seats` fall back to the training-level values in that case.
+  - `start_date`/`end_date` are `YYYY-MM-DD`; `start_time`/`end_time` are local `HH:MM:SS` daily-window times to be read in `timezone`. `venue` is `null` for virtual delivery.
   - `trainer` is `null` until an admin assigns one.
   - `meeting` is **omitted entirely** unless the admin has released the link. If the key is absent, don't render a join button.
   - `days_left`: whole days to the first upcoming session; `0` if `status` is `ongoing`; `null` if `completed`/`cancelled`.
-  - `sessions` are ordered by `day_number`; `planned_topics` may be `null`. (There is no session `title`.)
-  - timestamps are ISO‑8601 UTC.
+  - `sessions` are ordered by `day_number`; `planned_topics` may be `null`. (There is no session `title`.) Session `start_time`/`end_time` are ISO‑8601 UTC timestamps.
 - **Errors:** `401` no/invalid token · `403` not a learner **or** not enrolled in this training · `404` training not found
 
 ### 3.2 `PATCH /api/admin/trainings/:trainingId`
@@ -245,6 +258,129 @@ Admin action. Two **independent, both-optional** operations in one call — send
   }
   ```
 - **Errors:** `400` trainer not found/inactive · `409` that trainer is already assigned · `422` min-seats not met or invalid body · `404` training not found · `403` not an admin
+- **Note:** `:trainingId` accepts the training **UUID or code** (e.g. `TRN-2026-0001`).
+
+### 3.2.1 `GET /api/admin/trainings`
+
+Lists all Training IDs for the admin trainings view.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:**
+  ```json
+  {
+    "trainings": [
+      {
+        "id": "019f03c1-95ea-7cf3-bf75-f3c688a8f0cf",
+        "code": "TRN-2026-0001",
+        "title": "PMP Certification Training",
+        "status": "active",
+        "delivery_mode": "virtual",
+        "bucket": "direct_online",
+        "capacity": 20,
+        "enrolled_count": 2,
+        "min_seats": 1,
+        "start_date": "2026-09-15",
+        "end_date": "2026-09-18",
+        "duration_hours": 32,
+        "timezone": "Asia/Kolkata",
+        "trainer_assigned": true,
+        "trainer_name": "Trainer User"
+      }
+    ]
+  }
+  ```
+- `trainer_assigned` is `false` / `trainer_name` is `null` when no trainer is currently assigned.
+
+### 3.2.2 `GET /api/admin/trainings/:trainingId`
+
+Full admin detail for one training: schedule, the assigned trainer (if any), and every enrolled participant. `:trainingId` accepts the UUID or the code.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:**
+  ```json
+  {
+    "id": "019f03c1-95ea-7cf3-bf75-f3c688a8f0cf",
+    "training_id": "TRN-2026-0001",
+    "title": "PMP Certification Training",
+    "delivery_mode": "virtual",
+    "bucket": "direct_online",
+    "status": "active",
+    "capacity": 20,
+    "min_seats": 1,
+    "enrolled_count": 2,
+    "duration_hours": 32,
+    "batch_type": "weekday",
+    "timezone": "Asia/Kolkata",
+    "start_date": "2026-09-15",
+    "end_date": "2026-09-18",
+    "start_time": "09:00:00",
+    "end_time": "17:00:00",
+    "session_dates": ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"],
+    "venue": null,
+    "trainer": {
+      "id": "019f03c1-95ef-7992-82da-443ac54eca0d",
+      "name": "Trainer User",
+      "email": "trainer@invensis.test",
+      "bio": "PMP-certified trainer",
+      "experience": "10 years",
+      "assigned_at": "2026-06-29T09:10:00.000Z"
+    },
+    "participants": [
+      {
+        "enrolment_id": "019f12a4-bbab-707b-98fa-f4ff48ebafc6",
+        "participant_id": "019f12a4-bbaa-71e7-b75c-331199b42e59",
+        "name": "Manual Tester",
+        "email": "manual.tester@example.com",
+        "phone": "+91 90000 00000",
+        "job_title": "QA Engineer",
+        "status": "confirmed",
+        "enrolled_at": "2026-06-29T09:10:13.354Z",
+        "added_manually": true
+      }
+    ]
+  }
+  ```
+- `trainer` is `null` until assigned. `added_manually` is `true` for participants added by an admin (no linked CRM order).
+- **Errors:** `404` training not found · `403` not an admin
+
+### 3.2.3 `GET /api/admin/trainers`
+
+Lists active trainers for the assignment picker.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:**
+  ```json
+  { "trainers": [ { "id": "019f03c1-95ef-...", "name": "Trainer User", "email": "trainer@invensis.test", "bio": "PMP-certified trainer", "experience": "10 years" } ] }
+  ```
+
+### 3.2.4 `POST /api/admin/trainings/:trainingId/participants`
+
+Manually enrol a participant in a training. Finds or creates the learner's user account + participant record, then inserts a confirmed enrolment and refreshes `enrolled_count`. `:trainingId` accepts the UUID or the code.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:**
+  ```json
+  { "name": "Jane Doe", "email": "jane@example.com", "phone": "+91 …", "job_title": "Project Manager" }
+  ```
+  `phone` and `job_title` are optional.
+- **`201` response:**
+  ```json
+  {
+    "participant": {
+      "enrolment_id": "019f12a4-bbab-707b-98fa-f4ff48ebafc6",
+      "participant_id": "019f12a4-bbaa-71e7-b75c-331199b42e59",
+      "name": "Jane Doe",
+      "email": "jane@example.com",
+      "phone": "+91 …",
+      "job_title": "Project Manager",
+      "status": "confirmed",
+      "enrolled_at": "2026-06-29T09:10:13.354Z",
+      "added_manually": true
+    },
+    "enrolled_count": 3
+  }
+  ```
+- **Errors:** `409` participant already enrolled · `422` invalid body or training at full capacity · `404` training not found · `403` not an admin
 
 ### 3.3 `PATCH /api/trainer/sessions/:sessionId/topics`
 
