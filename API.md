@@ -91,6 +91,14 @@ Returned by `login`, `refresh`, and `me`. This is the full public shape (no secr
 - **Route** to the default portal by `user.role` after login.
 - **Render nav / guard sections** by `capabilities`, not `role`. Show a "Sponsor / Invoices" area whenever `capabilities.sponsor` is `true`, learner content whenever `capabilities.learner` is `true`, etc. A self-buyer (`role: "learner"` with `sponsor: true, learner: true`) then sees **both**.
 
+**The `sponsor` field** (returned alongside `capabilities` on `login`/`refresh`/`me`): for a **learner**, this is *who paid for them* — the buyer of the order their enrolment came from — as `{ id, name, email }`:
+
+```json
+"sponsor": { "id": "019f16ee-...", "name": "Corp Sponsor", "email": "corp-sponsor@crm.test" }
+```
+
+It is **`null`** whenever there's no distinct sponsor: a **self-buyer** (you're your own sponsor — `sponsor:true, learner:true`), a **manually-added** learner (no order), or a **non-learner** (admin/trainer/sponsor-only). Use it on the learner portal to show "Sponsored by …". If a learner was enrolled via multiple sponsors, this is the most recent one.
+
 **⚠️ Capabilities can change after login.** They are a **snapshot** computed at response time and are deliberately **not** baked into the access token (a learner can later become a sponsor by buying another seat; a new enrolment can arrive from the CRM mid-session). Therefore:
 - Don't treat the login-time capabilities as permanent — they can grow/change.
 - Re-read them whenever you refresh state: **every `refresh` and every `me` returns the current set.** Calling `GET /api/auth/me` on app load (and after actions that might change access) is the reliable way to stay current.
@@ -117,7 +125,8 @@ Authenticate with email + password.
   {
     "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true },
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false }
+    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false },
+    "sponsor": null
   }
   ```
 - **Errors:** `401` invalid credentials · `403` inactive account · `422` bad body · `429` too many attempts
@@ -134,7 +143,8 @@ Exchange the refresh cookie for a new access token (and a rotated refresh cookie
   {
     "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true },
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false }
+    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false },
+    "sponsor": null
   }
   ```
 - **Errors:** `401` if the cookie is missing, expired, revoked (e.g. already rotated or logged out), or the account is inactive.
@@ -157,7 +167,8 @@ Get the currently authenticated user.
   ```json
   {
     "user": { "id": "019ef3...", "name": "Admin User", "email": "admin@invensis.test", "role": "admin", "isActive": true },
-    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false }
+    "capabilities": { "admin": true, "trainer": false, "sponsor": false, "learner": false },
+    "sponsor": null
   }
   ```
 - **Errors:** `401` missing/invalid/expired access token · `404` user no longer exists

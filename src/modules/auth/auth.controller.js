@@ -17,16 +17,16 @@ function refreshCookieOptions(expiresAt) {
 
 export async function login(req, res) {
   const data = loginSchema.parse(req.body);
-  const { user, accessToken, refresh, capabilities } = await authService.login(data);
+  const { user, accessToken, refresh, capabilities, sponsor } = await authService.login(data);
   res.cookie(REFRESH_COOKIE, refresh.token, refreshCookieOptions(refresh.expiresAt));
-  res.json({ user, accessToken, capabilities });
+  res.json({ user, accessToken, capabilities, sponsor });
 }
 
 export async function refresh(req, res) {
   const token = req.cookies?.[REFRESH_COOKIE];
-  const { user, accessToken, refresh, capabilities } = await authService.refresh(token);
+  const { user, accessToken, refresh, capabilities, sponsor } = await authService.refresh(token);
   res.cookie(REFRESH_COOKIE, refresh.token, refreshCookieOptions(refresh.expiresAt));
-  res.json({ user, accessToken, capabilities });
+  res.json({ user, accessToken, capabilities, sponsor });
 }
 
 export async function logout(req, res) {

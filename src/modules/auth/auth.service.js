@@ -9,7 +9,7 @@ import {
 } from "../../lib/jwt.js";
 import { tokenStore } from "../../lib/token-store.js";
 import { AppError } from "../../lib/errors.js";
-import { resolveCapabilities } from "../../lib/capabilities.js";
+import { resolveCapabilities, resolveSponsor } from "../../lib/capabilities.js";
 
 async function findByEmail(email) {
   const [user] = await db
@@ -30,6 +30,13 @@ function publicUser(u) {
   return { id: u.id, name: u.name, email: u.email, role: u.role, isActive: u.isActive };
 }
 
+// Capabilities + (for learners) who sponsored them. Returned by login/refresh/me.
+async function accessContext(user) {
+  const capabilities = await resolveCapabilities(user);
+  const sponsor = capabilities.learner ? await resolveSponsor(user.id) : null;
+  return { capabilities, sponsor };
+}
+
 export async function login({ email, password }) {
   const user = await findByEmail(email);
   if (!user || !user.passwordHash) {
@@ -46,7 +53,7 @@ export async function login({ email, password }) {
     user: publicUser(user),
     accessToken: signAccessToken(user),
     refresh: signRefreshToken(user),
-    capabilities: await resolveCapabilities(user),
+    ...(await accessContext(user)),
   };
 }
 
@@ -79,7 +86,7 @@ export async function refresh(refreshToken) {
     user: publicUser(user),
     accessToken: signAccessToken(user),
     refresh: signRefreshToken(user),
-    capabilities: await resolveCapabilities(user),
+    ...(await accessContext(user)),
   };
 }
 
@@ -102,6 +109,6 @@ export async function me(userId) {
   if (!user) throw new AppError("User not found", 404);
   return {
     user: publicUser(user),
-    capabilities: await resolveCapabilities(user),
+    ...(await accessContext(user)),
   };
 }

@@ -34,3 +34,26 @@ export async function resolveCapabilities(user) {
     learner: user.role === "learner" || r.is_learner === true,
   };
 }
+
+/**
+ * For a learner, who sponsored them — the buyer of the order their enrolment
+ * came from. Self-sponsorship is excluded (a self-buyer is their own sponsor),
+ * so this returns null for self-buyers, manually-added learners (no order), and
+ * non-learners. If enrolled via multiple sponsors, returns the most recent.
+ */
+export async function resolveSponsor(userId) {
+  const res = await db.execute(sql`
+    SELECT u.id, u.name, u.email
+    FROM enrolments e
+    JOIN participants p ON p.id = e.participant_id
+    JOIN orders o ON o.id = e.order_id
+    JOIN users u ON u.id = o.sponsor_user_id
+    WHERE p.user_id = ${userId}
+      AND e.status = 'confirmed'
+      AND o.sponsor_user_id <> ${userId}
+    ORDER BY e.enrolled_at DESC
+    LIMIT 1
+  `);
+  const r = res.rows?.[0];
+  return r ? { id: r.id, name: r.name, email: r.email } : null;
+}
