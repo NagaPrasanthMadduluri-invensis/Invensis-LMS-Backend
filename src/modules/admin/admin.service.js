@@ -456,7 +456,9 @@ export async function onboardTrainer(adminId, body, ip) {
 
     let [user] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user) {
-      const passwordHash = await hashPassword(env.DEFAULT_PARTICIPANT_PASSWORD);
+      // Use the provided password, else the placeholder. (If the user already
+      // exists we never touch their password — only add the trainer profile.)
+      const passwordHash = await hashPassword(body.password ?? env.DEFAULT_PARTICIPANT_PASSWORD);
       [user] = await tx
         .insert(users)
         .values({ email, name, role: "trainer", passwordHash })

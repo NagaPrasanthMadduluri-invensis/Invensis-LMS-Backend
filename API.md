@@ -403,13 +403,14 @@ Onboard a trainer — ensures a `users` account (role `trainer`, placeholder pas
   {
     "name": "New Trainer",
     "email": "trainer@example.com",
+    "password": "S3tByAdmin!",
     "bio": "Cloud expert",
     "experience": "10 years",
     "rate": 1500,
     "certificates": [{ "title": "AWS SA", "issued_by": "AWS", "issued_date": "2025-01-01", "file_key": "..." }]
   }
   ```
-  Only `name` + `email` are required; `bio`/`experience`/`rate`/`certificates` are optional.
+  Only `name` + `email` are required; `password` (min 8), `bio`/`experience`/`rate`/`certificates` are optional. If `password` is omitted, the placeholder default is used. **`password` only applies when a new account is created** — if a user with that email already exists, their password is left unchanged (only the trainer profile is added).
 - **`201` response:** `{ "trainer": { "id", "user_id", "name", "email", "bio", "experience", "rate", "certificates", "is_active" } }`
 - **Errors:** `409` that user is already a trainer · `422` invalid body · `403` not an admin
 

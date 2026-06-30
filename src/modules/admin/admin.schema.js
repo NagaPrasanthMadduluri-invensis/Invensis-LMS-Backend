@@ -30,6 +30,7 @@ const certificateSchema = z
 export const onboardTrainerSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(8, "Password must be at least 8 characters").optional(),
   bio: z.string().trim().optional(),
   experience: z.string().trim().optional(),
   rate: z.number().nonnegative().optional(),
