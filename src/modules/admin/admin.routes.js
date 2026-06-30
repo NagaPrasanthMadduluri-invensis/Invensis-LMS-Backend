@@ -20,6 +20,48 @@ router.get(
   asyncHandler(ctrl.listTrainers)
 );
 
+router.post(
+  "/trainers",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.onboardTrainer)
+);
+
+router.get(
+  "/trainers/:trainerId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getTrainerDetail)
+);
+
+router.patch(
+  "/trainers/:trainerId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.updateTrainer)
+);
+
+router.patch(
+  "/participants/:participantId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.updateParticipant)
+);
+
+router.patch(
+  "/enrolments/:enrolmentId/cancel",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.cancelEnrolment)
+);
+
+router.patch(
+  "/enrolments/:enrolmentId/transfer",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.transferEnrolment)
+);
+
 router.get(
   "/trainings/:trainingId",
   verifyToken,

@@ -393,6 +393,82 @@ Manually enrol a participant in a training. Finds or creates the learner's user 
   ```
 - **Errors:** `409` participant already enrolled · `422` invalid body or training at full capacity · `404` training not found · `403` not an admin
 
+### 3.2.5 `POST /api/admin/trainers`
+
+Onboard a trainer — ensures a `users` account (role `trainer`, placeholder password if new) and creates the trainer profile.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:**
+  ```json
+  {
+    "name": "New Trainer",
+    "email": "trainer@example.com",
+    "bio": "Cloud expert",
+    "experience": "10 years",
+    "rate": 1500,
+    "certificates": [{ "title": "AWS SA", "issued_by": "AWS", "issued_date": "2025-01-01", "file_key": "..." }]
+  }
+  ```
+  Only `name` + `email` are required; `bio`/`experience`/`rate`/`certificates` are optional.
+- **`201` response:** `{ "trainer": { "id", "user_id", "name", "email", "bio", "experience", "rate", "certificates", "is_active" } }`
+- **Errors:** `409` that user is already a trainer · `422` invalid body · `403` not an admin
+
+### 3.2.6 `GET /api/admin/trainers/:trainerId`
+
+Trainer profile + full assignment history.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:**
+  ```json
+  {
+    "id": "019f172b-...", "user_id": "...", "name": "New Trainer", "email": "trainer@example.com",
+    "bio": "...", "experience": "...", "rate": "1500", "certificates": [...], "is_active": true,
+    "assignments": [
+      { "training_id": "...", "code": "TRN-2026-0001", "title": "PMP …", "assigned_at": "…", "removed_at": null, "active": true }
+    ]
+  }
+  ```
+- **Errors:** `404` trainer not found · `403` not an admin
+
+### 3.2.7 `PATCH /api/admin/trainers/:trainerId`
+
+Edit a trainer / deactivate. Send any subset.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** any of `name`, `bio`, `experience`, `rate`, `certificates`, `is_active` (at least one).
+- **`200` response:** `{ "trainer": { ...updated } }`. Set `is_active: false` to stop a trainer being assignable (existing assignments are untouched).
+- **Errors:** `404` trainer not found · `422` empty/invalid body · `403` not an admin
+
+### 3.2.8 `PATCH /api/admin/participants/:participantId`
+
+Edit a participant's details. **Email is not editable here** (it's the login identity); `name` is also synced to the linked account.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** any of `name`, `phone`, `job_title` (at least one).
+- **`200` response:** `{ "participant": { "id", "user_id", "name", "email", "phone", "job_title" } }`
+- **Errors:** `404` participant not found · `422` empty/invalid body · `403` not an admin
+
+### 3.2.9 `PATCH /api/admin/enrolments/:enrolmentId/cancel`
+
+Cancel an enrolment (frees the seat, recomputes `enrolled_count`). **Reason required** and audited.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** `{ "reason": "duplicate registration" }`
+- **`200` response:** `{ "id": "...", "status": "cancelled" }`
+- **Errors:** `409` already cancelled · `422` missing reason · `404` enrolment not found · `403` not an admin
+
+### 3.2.10 `PATCH /api/admin/enrolments/:enrolmentId/transfer`
+
+Move a participant to another training. Marks the source enrolment `transferred` and creates a new confirmed enrolment in the target (sponsor/order link preserved); recomputes both counts. **Reason required** and audited.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** `{ "training_id": "TRN-2026-0002", "reason": "learner requested a different batch" }` (`training_id` accepts UUID or code)
+- **`200` response:**
+  ```json
+  { "from_enrolment_id": "...", "to_enrolment_id": "...", "to_training": "TRN-2026-0002", "status": "transferred" }
+  ```
+- **Errors:** `409` not a confirmed enrolment, or already enrolled in target · `422` same training, target full, or missing reason · `404` enrolment/target not found · `403` not an admin
+
 ### 3.3 `PATCH /api/trainer/sessions/:sessionId/topics`
 
 Lets the **assigned trainer** set/update a session's planned topics.

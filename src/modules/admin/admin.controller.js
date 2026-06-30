@@ -1,4 +1,12 @@
-import { updateTrainingSchema, addParticipantSchema } from "./admin.schema.js";
+import {
+  updateTrainingSchema,
+  addParticipantSchema,
+  onboardTrainerSchema,
+  updateTrainerSchema,
+  updateParticipantSchema,
+  cancelEnrolmentSchema,
+  transferEnrolmentSchema,
+} from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
 
 export async function listTrainings(req, res) {
@@ -36,4 +44,49 @@ export async function updateTraining(req, res) {
     req.ip
   );
   res.json({ training });
+}
+
+export async function onboardTrainer(req, res) {
+  const body = onboardTrainerSchema.parse(req.body);
+  const trainer = await adminService.onboardTrainer(req.user.user_id, body, req.ip);
+  res.status(201).json({ trainer });
+}
+
+export async function getTrainerDetail(req, res) {
+  res.json(await adminService.getTrainerDetail(req.params.trainerId));
+}
+
+export async function updateTrainer(req, res) {
+  const body = updateTrainerSchema.parse(req.body);
+  const trainer = await adminService.updateTrainer(req.user.user_id, req.params.trainerId, body, req.ip);
+  res.json({ trainer });
+}
+
+export async function updateParticipant(req, res) {
+  const body = updateParticipantSchema.parse(req.body);
+  const participant = await adminService.updateParticipant(
+    req.user.user_id,
+    req.params.participantId,
+    body,
+    req.ip
+  );
+  res.json({ participant });
+}
+
+export async function cancelEnrolment(req, res) {
+  const { reason } = cancelEnrolmentSchema.parse(req.body);
+  const result = await adminService.cancelEnrolment(req.user.user_id, req.params.enrolmentId, reason, req.ip);
+  res.json(result);
+}
+
+export async function transferEnrolment(req, res) {
+  const { training_id, reason } = transferEnrolmentSchema.parse(req.body);
+  const result = await adminService.transferEnrolment(
+    req.user.user_id,
+    req.params.enrolmentId,
+    training_id,
+    reason,
+    req.ip
+  );
+  res.json(result);
 }

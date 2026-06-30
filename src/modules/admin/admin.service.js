@@ -430,3 +430,304 @@ export async function addParticipant(adminId, trainingRef, body, ip) {
     };
   });
 }
+
+/* ─────────────────────────────────────────────────────────
+   Trainer management
+   ───────────────────────────────────────────────────────── */
+
+function publicTrainer(t, u) {
+  return {
+    id: t.id,
+    user_id: t.userId,
+    name: u.name,
+    email: u.email,
+    bio: t.bio,
+    experience: t.experience,
+    rate: t.rate,
+    certificates: t.certificates,
+    is_active: t.isActive,
+  };
+}
+
+// Onboard a trainer: ensure a user account (role trainer) + a trainers profile.
+export async function onboardTrainer(adminId, body, ip) {
+  return db.transaction(async (tx) => {
+    const { email, name } = body;
+
+    let [user] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
+    if (!user) {
+      const passwordHash = await hashPassword(env.DEFAULT_PARTICIPANT_PASSWORD);
+      [user] = await tx
+        .insert(users)
+        .values({ email, name, role: "trainer", passwordHash })
+        .returning();
+    }
+
+    const [existing] = await tx
+      .select({ id: trainers.id })
+      .from(trainers)
+      .where(eq(trainers.userId, user.id))
+      .limit(1);
+    if (existing) throw new AppError("This user is already a trainer", 409);
+
+    const [trainer] = await tx
+      .insert(trainers)
+      .values({
+        userId: user.id,
+        bio: body.bio ?? null,
+        experience: body.experience ?? null,
+        rate: body.rate != null ? String(body.rate) : null,
+        certificates: body.certificates ?? [],
+      })
+      .returning();
+
+    await writeAudit(tx, {
+      entityType: "trainer",
+      entityId: trainer.id,
+      action: "trainer_onboarded",
+      actorId: adminId,
+      after: { email, name },
+      ipAddress: ip,
+    });
+
+    return publicTrainer(trainer, user);
+  });
+}
+
+export async function getTrainerDetail(trainerId) {
+  const [row] = await db
+    .select({ t: trainers, u: users })
+    .from(trainers)
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(eq(trainers.id, trainerId))
+    .limit(1);
+  if (!row) throw new AppError("Trainer not found", 404);
+
+  const history = await db
+    .select({
+      trainingId: trainerAssignments.trainingId,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      assignedAt: trainerAssignments.assignedAt,
+      removedAt: trainerAssignments.removedAt,
+    })
+    .from(trainerAssignments)
+    .innerJoin(trainingIds, eq(trainerAssignments.trainingId, trainingIds.id))
+    .where(eq(trainerAssignments.trainerId, trainerId))
+    .orderBy(desc(trainerAssignments.assignedAt));
+
+  return {
+    ...publicTrainer(row.t, row.u),
+    assignments: history.map((a) => ({
+      training_id: a.trainingId,
+      code: a.code,
+      title: a.title,
+      assigned_at: a.assignedAt,
+      removed_at: a.removedAt,
+      active: a.removedAt == null,
+    })),
+  };
+}
+
+export async function updateTrainer(adminId, trainerId, body, ip) {
+  return db.transaction(async (tx) => {
+    const [trainer] = await tx.select().from(trainers).where(eq(trainers.id, trainerId)).limit(1);
+    if (!trainer) throw new AppError("Trainer not found", 404);
+
+    const before = {
+      bio: trainer.bio,
+      experience: trainer.experience,
+      rate: trainer.rate,
+      certificates: trainer.certificates,
+      is_active: trainer.isActive,
+    };
+
+    const set = { updatedAt: new Date() };
+    if (body.bio !== undefined) set.bio = body.bio;
+    if (body.experience !== undefined) set.experience = body.experience;
+    if (body.rate !== undefined) set.rate = body.rate != null ? String(body.rate) : null;
+    if (body.certificates !== undefined) set.certificates = body.certificates;
+    if (body.is_active !== undefined) set.isActive = body.is_active;
+    await tx.update(trainers).set(set).where(eq(trainers.id, trainerId));
+
+    if (body.name !== undefined) {
+      await tx
+        .update(users)
+        .set({ name: body.name, updatedAt: new Date() })
+        .where(eq(users.id, trainer.userId));
+    }
+
+    await writeAudit(tx, {
+      entityType: "trainer",
+      entityId: trainerId,
+      action: "trainer_updated",
+      actorId: adminId,
+      before,
+      after: { ...set, name: body.name },
+      ipAddress: ip,
+    });
+
+    const [updated] = await tx.select().from(trainers).where(eq(trainers.id, trainerId)).limit(1);
+    const [u] = await tx.select().from(users).where(eq(users.id, trainer.userId)).limit(1);
+    return publicTrainer(updated, u);
+  });
+}
+
+/* ─────────────────────────────────────────────────────────
+   Participant + enrolment management
+   ───────────────────────────────────────────────────────── */
+
+function publicParticipant(p) {
+  return {
+    id: p.id,
+    user_id: p.userId,
+    name: p.name,
+    email: p.email,
+    phone: p.phone,
+    job_title: p.jobTitle,
+  };
+}
+
+async function refreshEnrolledCount(tx, trainingId) {
+  const res = await tx.execute(
+    sql`SELECT count(*)::int AS n FROM enrolments WHERE training_id = ${trainingId} AND status = 'confirmed'`
+  );
+  await tx
+    .update(trainingIds)
+    .set({ enrolledCount: res.rows?.[0]?.n ?? 0, updatedAt: new Date() })
+    .where(eq(trainingIds.id, trainingId));
+}
+
+// Edit participant details (name/phone/job_title). Email is the login identity
+// and is intentionally not editable here. Name is synced to the linked account.
+export async function updateParticipant(adminId, participantId, body, ip) {
+  return db.transaction(async (tx) => {
+    const [p] = await tx.select().from(participants).where(eq(participants.id, participantId)).limit(1);
+    if (!p) throw new AppError("Participant not found", 404);
+
+    const before = { name: p.name, phone: p.phone, job_title: p.jobTitle };
+    const set = { updatedAt: new Date() };
+    if (body.name !== undefined) set.name = body.name;
+    if (body.phone !== undefined) set.phone = body.phone;
+    if (body.job_title !== undefined) set.jobTitle = body.job_title;
+    await tx.update(participants).set(set).where(eq(participants.id, participantId));
+
+    if (body.name !== undefined && p.userId) {
+      await tx
+        .update(users)
+        .set({ name: body.name, updatedAt: new Date() })
+        .where(eq(users.id, p.userId));
+    }
+
+    await writeAudit(tx, {
+      entityType: "participant",
+      entityId: participantId,
+      action: "participant_updated",
+      actorId: adminId,
+      before,
+      after: { name: body.name, phone: body.phone, job_title: body.job_title },
+      ipAddress: ip,
+    });
+
+    const [updated] = await tx.select().from(participants).where(eq(participants.id, participantId)).limit(1);
+    return publicParticipant(updated);
+  });
+}
+
+// Cancel an enrolment (reason required, audited; frees the seat).
+export async function cancelEnrolment(adminId, enrolmentId, reason, ip) {
+  return db.transaction(async (tx) => {
+    const [e] = await tx.select().from(enrolments).where(eq(enrolments.id, enrolmentId)).limit(1);
+    if (!e) throw new AppError("Enrolment not found", 404);
+    if (e.status === "cancelled") throw new AppError("Enrolment is already cancelled", 409);
+
+    await tx
+      .update(enrolments)
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(eq(enrolments.id, enrolmentId));
+    await refreshEnrolledCount(tx, e.trainingId);
+
+    await writeAudit(tx, {
+      entityType: "enrolment",
+      entityId: enrolmentId,
+      action: "enrolment_cancelled",
+      actorId: adminId,
+      before: { status: e.status },
+      after: { status: "cancelled" },
+      reason,
+      ipAddress: ip,
+    });
+
+    return { id: enrolmentId, status: "cancelled" };
+  });
+}
+
+// Transfer a participant to another training (reason required, audited). Marks
+// the source enrolment 'transferred' and creates a new confirmed enrolment in
+// the target, preserving the sponsoring order link.
+export async function transferEnrolment(adminId, enrolmentId, targetRef, reason, ip) {
+  return db.transaction(async (tx) => {
+    const [e] = await tx.select().from(enrolments).where(eq(enrolments.id, enrolmentId)).limit(1);
+    if (!e) throw new AppError("Enrolment not found", 404);
+    if (e.status !== "confirmed") {
+      throw new AppError("Only a confirmed enrolment can be transferred", 409);
+    }
+
+    const target = await resolveTraining(tx, targetRef);
+    if (target.id === e.trainingId) {
+      throw new AppError("Cannot transfer to the same training", 422);
+    }
+    if (target.capacity != null && target.enrolledCount >= target.capacity) {
+      throw new AppError("Target training is at full capacity", 422);
+    }
+
+    const [dup] = await tx
+      .select({ id: enrolments.id })
+      .from(enrolments)
+      .where(
+        and(
+          eq(enrolments.trainingId, target.id),
+          eq(enrolments.participantId, e.participantId),
+          sql`status NOT IN ('cancelled', 'transferred')`
+        )
+      )
+      .limit(1);
+    if (dup) throw new AppError("Participant is already enrolled in the target training", 409);
+
+    await tx
+      .update(enrolments)
+      .set({ status: "transferred", updatedAt: new Date() })
+      .where(eq(enrolments.id, enrolmentId));
+
+    const [created] = await tx
+      .insert(enrolments)
+      .values({
+        trainingId: target.id,
+        participantId: e.participantId,
+        orderId: e.orderId,
+        status: "confirmed",
+      })
+      .returning();
+
+    await refreshEnrolledCount(tx, e.trainingId);
+    await refreshEnrolledCount(tx, target.id);
+
+    await writeAudit(tx, {
+      entityType: "enrolment",
+      entityId: enrolmentId,
+      action: "enrolment_transferred",
+      actorId: adminId,
+      before: { training_id: e.trainingId, status: "confirmed" },
+      after: { training_id: target.id, new_enrolment_id: created.id, status: "transferred" },
+      reason,
+      ipAddress: ip,
+    });
+
+    return {
+      from_enrolment_id: enrolmentId,
+      to_enrolment_id: created.id,
+      to_training: target.code,
+      status: "transferred",
+    };
+  });
+}
