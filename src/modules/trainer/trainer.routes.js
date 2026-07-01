@@ -6,6 +6,20 @@ import { asyncHandler } from "../../lib/async-handler.js";
 
 const router = Router();
 
+router.get(
+  "/trainings",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.listMyTrainings)
+);
+
+router.get(
+  "/trainings/:trainingRef",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.getTrainingDetail)
+);
+
 router.patch(
   "/sessions/:sessionId/topics",
   verifyToken,

@@ -348,10 +348,20 @@ Full admin detail for one training: schedule, the assigned trainer (if any), and
         "enrolled_at": "2026-06-29T09:10:13.354Z",
         "added_manually": true
       }
+    ],
+    "sessions": [
+      {
+        "id": "019ef7fe-e438-770a-acf8-a1cce142d198",
+        "day_number": 1,
+        "planned_topics": "Day 1: intro, framework",
+        "start_time": "2026-09-15T03:30:00.000Z",
+        "end_time": "2026-09-15T11:30:00.000Z",
+        "status": "scheduled"
+      }
     ]
   }
   ```
-- `trainer` is `null` until assigned. `added_manually` is `true` for participants added by an admin (no linked CRM order).
+- `trainer` is `null` until assigned. `added_manually` is `true` for participants added by an admin (no linked CRM order). `sessions[]` shows the day-wise sessions with the `planned_topics` set by the trainer.
 - **Errors:** `404` training not found · `403` not an admin
 
 ### 3.2.3 `GET /api/admin/trainers`
@@ -470,9 +480,70 @@ Move a participant to another training. Marks the source enrolment `transferred`
   ```
 - **Errors:** `409` not a confirmed enrolment, or already enrolled in target · `422` same training, target full, or missing reason · `404` enrolment/target not found · `403` not an admin
 
-### 3.3 `PATCH /api/trainer/sessions/:sessionId/topics`
+### 3.3.1 `GET /api/trainer/trainings`
 
-Lets the **assigned trainer** set/update a session's planned topics.
+Lists the trainings **currently assigned to the logged-in trainer** (derived from the JWT — no trainer id in the URL).
+
+- **Auth:** Bearer access token · role `trainer`
+- **`200` response:**
+  ```json
+  {
+    "trainings": [
+      {
+        "id": "019ef7fe-e436-7c06-89b9-8cb925fd86c0",
+        "code": "TRN-2026-0001",
+        "title": "PMP Certification Training",
+        "status": "active",
+        "delivery_mode": "virtual",
+        "bucket": "direct_online",
+        "capacity": 20,
+        "enrolled_count": 2,
+        "start_date": "2026-09-15",
+        "end_date": "2026-09-18",
+        "timezone": "Asia/Kolkata"
+      }
+    ]
+  }
+  ```
+  Returns only active assignments; empty list if the trainer has none.
+- **Errors:** `401` no/invalid token · `403` not a trainer
+
+### 3.3.2 `GET /api/trainer/trainings/:trainingRef`
+
+Full detail for one training the trainer is assigned to, **including its sessions**. `:trainingRef` accepts the UUID or the code. Each session includes its **`id` (the `sessionId`)** — use it with `PATCH /api/trainer/sessions/:sessionId/topics` (§3.3.3).
+
+- **Auth:** Bearer access token · role `trainer` · must be currently assigned to this training
+- **`200` response:**
+  ```json
+  {
+    "id": "019ef7fe-e436-7c06-89b9-8cb925fd86c0",
+    "training_id": "TRN-2026-0001",
+    "title": "PMP Certification Training",
+    "delivery_mode": "virtual",
+    "bucket": "direct_online",
+    "status": "active",
+    "start_date": "2026-09-15",
+    "end_date": "2026-09-18",
+    "timezone": "Asia/Kolkata",
+    "batch_type": "weekday",
+    "venue": null,
+    "sessions": [
+      {
+        "id": "019ef7fe-e438-770a-acf8-a1cce142d198",
+        "day_number": 1,
+        "planned_topics": "Intro to PMP, framework",
+        "start_time": "2026-09-15T03:30:00.000Z",
+        "end_time": "2026-09-15T11:30:00.000Z",
+        "status": "scheduled"
+      }
+    ]
+  }
+  ```
+- **Errors:** `401` no/invalid token · `403` not a trainer, or not assigned to this training · `404` training not found
+
+### 3.3.3 `PATCH /api/trainer/sessions/:sessionId/topics`
+
+Lets the **assigned trainer** set/update a session's planned topics. Use the `sessionId` from §3.3.2.
 
 - **Auth:** Bearer access token · role `trainer` · must be the currently-assigned trainer for the session's training
 - **Body:**

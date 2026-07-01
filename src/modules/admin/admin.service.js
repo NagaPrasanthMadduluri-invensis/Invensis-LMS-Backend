@@ -3,6 +3,7 @@ import { db } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import {
   trainingIds,
+  trainingSessions,
   trainers,
   trainerAssignments,
   enrolments,
@@ -277,6 +278,19 @@ export async function getTrainingDetail(trainingRef) {
     .where(eq(enrolments.trainingId, training.id))
     .orderBy(desc(enrolments.enrolledAt));
 
+  const sessions = await db
+    .select({
+      id: trainingSessions.id,
+      dayNumber: trainingSessions.dayNumber,
+      plannedTopics: trainingSessions.plannedTopics,
+      startTime: trainingSessions.startTime,
+      endTime: trainingSessions.endTime,
+      status: trainingSessions.status,
+    })
+    .from(trainingSessions)
+    .where(eq(trainingSessions.trainingId, training.id))
+    .orderBy(trainingSessions.dayNumber);
+
   return {
     id: training.id,
     training_id: training.code,
@@ -316,6 +330,14 @@ export async function getTrainingDetail(trainingRef) {
       status: e.status,
       enrolled_at: e.enrolledAt,
       added_manually: e.orderId == null,
+    })),
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      day_number: s.dayNumber,
+      planned_topics: s.plannedTopics,
+      start_time: s.startTime,
+      end_time: s.endTime,
+      status: s.status,
     })),
   };
 }

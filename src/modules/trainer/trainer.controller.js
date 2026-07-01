@@ -1,6 +1,14 @@
 import { updateTopicsSchema } from "./trainer.schema.js";
 import * as trainerService from "./trainer.service.js";
 
+export async function listMyTrainings(req, res) {
+  res.json(await trainerService.listMyTrainings(req.user.user_id));
+}
+
+export async function getTrainingDetail(req, res) {
+  res.json(await trainerService.getTrainingDetail(req.user.user_id, req.params.trainingRef));
+}
+
 export async function updateSessionTopics(req, res) {
   const { planned_topics } = updateTopicsSchema.parse(req.body);
   const session = await trainerService.updateSessionTopics(
