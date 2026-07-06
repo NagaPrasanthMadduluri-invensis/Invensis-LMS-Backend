@@ -33,9 +33,18 @@ const schema = z.object({
   SCHEDULE_DEFAULT_CAPACITY: z.coerce.number().int().positive().default(30),
   SCHEDULE_DEFAULT_MIN_SEATS: z.coerce.number().int().positive().default(1),
 
-  // Placeholder password for learner accounts auto-created from CRM orders
-  // (until the account-setup email flow exists)
-  DEFAULT_PARTICIPANT_PASSWORD: z.string().min(8).default("Welcome@123"),
+  // Account-setup / password-reset email flow.
+  // FRONTEND_URL is the base for the emailed set-password / reset-password links.
+  FRONTEND_URL: z.string().url().default("http://localhost:3000"),
+  SETUP_TOKEN_TTL_HOURS: z.coerce.number().int().positive().default(72),
+  // SMTP (Nodemailer). If SMTP_HOST is unset the mailer falls back to logging
+  // the email to the console — dev/CI works without real credentials.
+  MAIL_FROM: z.string().default("Invensis LMS <no-reply@invensis.net>"),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: boolFromEnv.default(false),
 });
 
 const parsed = schema.safeParse(process.env);

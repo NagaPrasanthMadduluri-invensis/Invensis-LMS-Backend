@@ -173,7 +173,33 @@ Get the currently authenticated user.
   ```
 - **Errors:** `401` missing/invalid/expired access token · `404` user no longer exists
 
-### 2.5 `GET /api/health`
+### 2.5 `POST /api/auth/forgot-password`
+
+Request a password-reset link by email. **Always returns `200` with the same message** whether or not an account exists (no account enumeration). A reset link is emailed only when an active account with that email exists.
+
+- **Auth:** none · rate-limited
+- **Body:** `{ "email": "user@example.com" }`
+- **`200` response:**
+  ```json
+  { "message": "If an account exists for that email, a reset link has been sent." }
+  ```
+- The emailed link points at `FRONTEND_URL/reset-password?token=<token>`. Your reset page reads `token` from the query string and submits it with the new password to §2.6.
+
+### 2.6 `POST /api/auth/set-password`
+
+Set a password using a token from an **account-setup** or **password-reset** email. Serves both links. On success the account is activated and any existing sessions are invalidated.
+
+- **Auth:** none · rate-limited
+- **Body:** `{ "token": "<from the email link>", "password": "min 8 chars" }`
+- **`200` response:**
+  ```json
+  { "message": "Password set. You can now log in." }
+  ```
+- **Errors:** `422` validation (e.g. password shorter than 8 chars) · `400` `{ "message": "Invalid or expired token" }` (unknown, expired, or already-used token). Tokens are **single-use** and valid for 72 hours.
+
+> **New accounts have no password until setup.** Accounts created by the system — CRM order learners & sponsors (§3.4), admin-added participants (§3.2.4), and admin-onboarded trainers without a supplied password (§3.2.5) — are created **active but with no password**. They **cannot log in** (login returns `401`) until the user follows the setup email (`FRONTEND_URL/set-password?token=…`) and sets one via §2.6.
+
+### 2.7 `GET /api/health`
 
 Liveness check. No auth.
 
@@ -376,7 +402,7 @@ Lists active trainers for the assignment picker.
 
 ### 3.2.4 `POST /api/admin/trainings/:trainingId/participants`
 
-Manually enrol a participant in a training. Finds or creates the learner's user account + participant record, then inserts a confirmed enrolment and refreshes `enrolled_count`. `:trainingId` accepts the UUID or the code.
+Manually enrol a participant in a training. Finds or creates the learner's user account + participant record, then inserts a confirmed enrolment and refreshes `enrolled_count`. `:trainingId` accepts the UUID or the code. A **newly created** account has no password and is emailed a setup link (see §2.6).
 
 - **Auth:** Bearer access token · role `admin`
 - **Body:**
@@ -405,7 +431,7 @@ Manually enrol a participant in a training. Finds or creates the learner's user 
 
 ### 3.2.5 `POST /api/admin/trainers`
 
-Onboard a trainer — ensures a `users` account (role `trainer`, placeholder password if new) and creates the trainer profile.
+Onboard a trainer — ensures a `users` account (role `trainer`) and creates the trainer profile. `password` is **optional**: if supplied, the trainer can log in immediately; if omitted, the new account has no password and is emailed a setup link (see §2.6).
 
 - **Auth:** Bearer access token · role `admin`
 - **Body:**
@@ -583,7 +609,7 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
   ```
   > Sign the **exact raw bytes** you send. Re-serializing differently on each side will make the signature mismatch.
 - **Behavior:** **idempotent** — creates or reuses the schedule + Training ID (`TRN-YYYY-NNNN`) + day-wise sessions, upserts participants by email, and inserts confirmed enrolments. Re-posting the same order changes nothing.
-- **Accounts:** each learner gets a `users` account (role `learner`); the `buyer` gets one too (role `sponsor`, unless that email already belongs to a learner — then it stays one account that is both) and is linked as the order's sponsor. All use a placeholder password until the setup-email flow exists.
+- **Accounts:** each learner gets a `users` account (role `learner`); the `buyer` gets one too (role `sponsor`, unless that email already belongs to a learner — then it stays one account that is both) and is linked as the order's sponsor. **Newly created accounts have no password** and are each emailed a setup link (see §2.6) so the user can set one; existing accounts are untouched.
 - **`201` response:**
   ```json
   {

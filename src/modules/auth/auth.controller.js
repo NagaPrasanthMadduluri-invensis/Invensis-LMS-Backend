@@ -1,4 +1,4 @@
-import { loginSchema } from "./auth.schema.js";
+import { loginSchema, forgotPasswordSchema, setPasswordSchema } from "./auth.schema.js";
 import * as authService from "./auth.service.js";
 import { env } from "../../config/env.js";
 
@@ -39,4 +39,17 @@ export async function logout(req, res) {
 export async function me(req, res) {
   const result = await authService.me(req.user.user_id);
   res.json(result); // { user, capabilities }
+}
+
+export async function forgotPassword(req, res) {
+  const { email } = forgotPasswordSchema.parse(req.body);
+  await authService.forgotPassword(email);
+  // Same response whether or not the account exists (no enumeration).
+  res.json({ message: "If an account exists for that email, a reset link has been sent." });
+}
+
+export async function setPassword(req, res) {
+  const { token, password } = setPasswordSchema.parse(req.body);
+  await authService.setPassword(token, password);
+  res.json({ message: "Password set. You can now log in." });
 }

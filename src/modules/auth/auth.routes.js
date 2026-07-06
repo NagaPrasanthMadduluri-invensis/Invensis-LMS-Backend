@@ -10,5 +10,7 @@ router.post("/login", authLimiter, asyncHandler(ctrl.login));
 router.post("/refresh", authLimiter, asyncHandler(ctrl.refresh));
 router.post("/logout", asyncHandler(ctrl.logout));
 router.get("/me", verifyToken, asyncHandler(ctrl.me));
+router.post("/forgot-password", authLimiter, asyncHandler(ctrl.forgotPassword));
+router.post("/set-password", authLimiter, asyncHandler(ctrl.setPassword));
 
 export default router;

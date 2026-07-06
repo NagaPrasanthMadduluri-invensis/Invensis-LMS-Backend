@@ -12,7 +12,7 @@ import {
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
-import { hashPassword } from "../../lib/password.js";
+import { provisionAccountSetup } from "../../lib/account-setup.js";
 
 const DELIVERY_MODE = {
   live_virtual: "virtual",
@@ -58,7 +58,11 @@ export async function ingestOrder(actorId, payload, ip) {
   const sch = payload.schedule;
   const scheduleCode = sch.schedule_id;
 
-  return db.transaction(async (tx) => {
+  // Users created here start with no password; after commit we email each a
+  // setup link so they can set one. Collected inside the tx, sent after.
+  const toProvision = [];
+
+  const result = await db.transaction(async (tx) => {
     // Serialise everything for this schedule (idempotent resolution).
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${scheduleCode}))`);
 
@@ -161,15 +165,12 @@ export async function ingestOrder(actorId, payload, ip) {
       .returning();
 
     /* ── 4. Participants + enrolments (idempotent) ── */
-    // Placeholder password for auto-created learner accounts. A future email
-    // flow will let learners set their own; hashed once and reused per order.
-    const defaultPasswordHash = await hashPassword(env.DEFAULT_PARTICIPANT_PASSWORD);
-
     let newEnrolments = 0;
     for (const l of payload.learners) {
       const name = learnerName(l);
 
-      // Find or create the learner's user account.
+      // Find or create the learner's user account (no password — a setup email
+      // is sent after commit so they can set their own).
       let [user] = await tx
         .select({ id: users.id })
         .from(users)
@@ -178,13 +179,9 @@ export async function ingestOrder(actorId, payload, ip) {
       if (!user) {
         [user] = await tx
           .insert(users)
-          .values({
-            email: l.email,
-            name,
-            role: "learner",
-            passwordHash: defaultPasswordHash,
-          })
+          .values({ email: l.email, name, role: "learner" })
           .returning({ id: users.id });
+        toProvision.push({ id: user.id, name, email: l.email });
       }
 
       // Upsert the participant, linked to that user account.
@@ -234,13 +231,9 @@ export async function ingestOrder(actorId, payload, ip) {
       if (!sponsorUser) {
         [sponsorUser] = await tx
           .insert(users)
-          .values({
-            email: buyer.email,
-            name: buyerName,
-            role: "sponsor",
-            passwordHash: defaultPasswordHash,
-          })
+          .values({ email: buyer.email, name: buyerName, role: "sponsor" })
           .returning({ id: users.id });
+        toProvision.push({ id: sponsorUser.id, name: buyerName, email: buyer.email });
       }
 
       await tx
@@ -279,4 +272,11 @@ export async function ingestOrder(actorId, payload, ip) {
       sponsor_email: payload.buyer?.email ?? null,
     };
   });
+
+  // After commit: email each newly-created account a setup link (best-effort).
+  for (const u of toProvision) {
+    await provisionAccountSetup(u, "setup");
+  }
+
+  return result;
 }

@@ -1,7 +1,12 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import { users } from "../../db/schema.js";
-import { verifyPassword } from "../../lib/password.js";
+import { hashPassword, verifyPassword } from "../../lib/password.js";
+import {
+  provisionAccountSetup,
+  findValidToken,
+  claimToken,
+} from "../../lib/account-setup.js";
 import {
   signAccessToken,
   signRefreshToken,
@@ -111,4 +116,40 @@ export async function me(userId) {
     user: publicUser(user),
     ...(await accessContext(user)),
   };
+}
+
+// Request a password-reset link. Always resolves the same way (no account
+// enumeration); only sends when an active account with that email exists.
+export async function forgotPassword(email) {
+  const user = await findByEmail(email);
+  if (user && user.isActive) {
+    await provisionAccountSetup(
+      { id: user.id, name: user.name, email: user.email },
+      "reset"
+    );
+  }
+}
+
+// Consume a setup/reset token and set the password. Claims the token first
+// (single-use), then sets the hash, activates the account, and bumps
+// token_version so any stale sessions are invalidated.
+export async function setPassword(rawToken, newPassword) {
+  return db.transaction(async (tx) => {
+    const token = await findValidToken(tx, rawToken);
+    if (!token) throw new AppError("Invalid or expired token", 400);
+
+    const claimed = await claimToken(tx, token.id);
+    if (!claimed) throw new AppError("Invalid or expired token", 400);
+
+    const passwordHash = await hashPassword(newPassword);
+    await tx
+      .update(users)
+      .set({
+        passwordHash,
+        isActive: true,
+        tokenVersion: sql`${users.tokenVersion} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, token.userId));
+  });
 }

@@ -23,6 +23,7 @@ export const batchTypeEnum = pgEnum("batch_type", ["weekday", "weekend", "combin
 export const trainingStatusEnum = pgEnum("training_status", ["pending", "active", "ongoing", "completed", "cancelled"]);
 export const sessionStatusEnum = pgEnum("session_status", ["scheduled", "ongoing", "completed", "cancelled"]);
 export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "cancelled", "transferred", "completed", "failed"]);
+export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
 
 /* ── users ─────────────────────────────────────────────── */
 export const users = pgTable("users", {
@@ -36,6 +37,27 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ── password_setup_tokens ─────────────────────────────────
+   Single-use, hashed tokens emailed to a user so they can set their initial
+   password ('setup') or reset a forgotten one ('reset'). Only the SHA-256 hash
+   of the token is stored; the raw token lives only in the email link. */
+export const passwordSetupTokens = pgTable(
+  "password_setup_tokens",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    tokenHash: text("token_hash").notNull(),
+    purpose: setupTokenPurposeEnum("purpose").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }), // null until consumed
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    tokenHashUnique: uniqueIndex("uniq_setup_token_hash").on(t.tokenHash),
+    userIdx: index("idx_setup_token_user").on(t.userId),
+  })
+);
 
 export const revokedRefreshTokens = pgTable("revoked_refresh_tokens", {
   jti: text("jti").primaryKey(),

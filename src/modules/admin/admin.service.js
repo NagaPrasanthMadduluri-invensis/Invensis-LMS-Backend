@@ -1,6 +1,5 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
-import { env } from "../../config/env.js";
 import {
   trainingIds,
   trainingSessions,
@@ -14,6 +13,7 @@ import {
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { hashPassword } from "../../lib/password.js";
+import { provisionAccountSetup } from "../../lib/account-setup.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
@@ -362,7 +362,8 @@ export async function listTrainers() {
 
 /* ── Manually add a participant + confirmed enrolment to a training ── */
 export async function addParticipant(adminId, trainingRef, body, ip) {
-  return db.transaction(async (tx) => {
+  let provision = null; // set when a brand-new account is created
+  const result = await db.transaction(async (tx) => {
     const training = await resolveTraining(tx, trainingRef);
 
     if (training.capacity != null && training.enrolledCount >= training.capacity) {
@@ -379,11 +380,12 @@ export async function addParticipant(adminId, trainingRef, body, ip) {
       .where(eq(users.email, email))
       .limit(1);
     if (!user) {
-      const passwordHash = await hashPassword(env.DEFAULT_PARTICIPANT_PASSWORD);
+      // No password — a setup email is sent after commit.
       [user] = await tx
         .insert(users)
-        .values({ email, name, role: "learner", passwordHash })
+        .values({ email, name, role: "learner" })
         .returning({ id: users.id });
+      provision = { id: user.id, name, email };
     }
 
     // Upsert the participant, linked to that user account.
@@ -451,6 +453,9 @@ export async function addParticipant(adminId, trainingRef, body, ip) {
       enrolled_count: enrolledCount,
     };
   });
+
+  if (provision) await provisionAccountSetup(provision, "setup");
+  return result;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -473,18 +478,21 @@ function publicTrainer(t, u) {
 
 // Onboard a trainer: ensure a user account (role trainer) + a trainers profile.
 export async function onboardTrainer(adminId, body, ip) {
-  return db.transaction(async (tx) => {
+  let provision = null; // set when a new account is created without a password
+  const result = await db.transaction(async (tx) => {
     const { email, name } = body;
 
     let [user] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user) {
-      // Use the provided password, else the placeholder. (If the user already
-      // exists we never touch their password — only add the trainer profile.)
-      const passwordHash = await hashPassword(body.password ?? env.DEFAULT_PARTICIPANT_PASSWORD);
+      // If a password was supplied, use it. Otherwise create with no password
+      // and email a setup link after commit. (If the user already exists we
+      // never touch their password — only add the trainer profile.)
+      const passwordHash = body.password ? await hashPassword(body.password) : null;
       [user] = await tx
         .insert(users)
         .values({ email, name, role: "trainer", passwordHash })
         .returning();
+      if (!body.password) provision = { id: user.id, name, email };
     }
 
     const [existing] = await tx
@@ -516,6 +524,9 @@ export async function onboardTrainer(adminId, body, ip) {
 
     return publicTrainer(trainer, user);
   });
+
+  if (provision) await provisionAccountSetup(provision, "setup");
+  return result;
 }
 
 export async function getTrainerDetail(trainerId) {
