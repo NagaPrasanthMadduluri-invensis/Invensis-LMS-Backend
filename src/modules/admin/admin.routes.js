@@ -41,6 +41,13 @@ router.patch(
   asyncHandler(ctrl.updateTrainer)
 );
 
+router.get(
+  "/participants",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.listParticipants)
+);
+
 router.patch(
   "/participants/:participantId",
   verifyToken,

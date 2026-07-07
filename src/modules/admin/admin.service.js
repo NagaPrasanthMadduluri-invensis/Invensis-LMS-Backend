@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -631,6 +631,62 @@ async function refreshEnrolledCount(tx, trainingId) {
     .update(trainingIds)
     .set({ enrolledCount: res.rows?.[0]?.n ?? 0, updatedAt: new Date() })
     .where(eq(trainingIds.id, trainingId));
+}
+
+// List all participants for the admin dashboard, paginated + optional search
+// (by name or email). Enriched with confirmed-enrolment count and account
+// status (has_password = false means their setup email is still pending).
+export async function listParticipants({ search, page, limit }) {
+  const offset = (page - 1) * limit;
+  const where = search
+    ? or(ilike(participants.name, `%${search}%`), ilike(participants.email, `%${search}%`))
+    : undefined;
+
+  const enrolmentCount = sql`(
+    SELECT count(*)::int FROM enrolments e
+    WHERE e.participant_id = ${participants.id} AND e.status = 'confirmed'
+  )`;
+
+  const rows = await db
+    .select({
+      id: participants.id,
+      name: participants.name,
+      email: participants.email,
+      phone: participants.phone,
+      jobTitle: participants.jobTitle,
+      createdAt: participants.createdAt,
+      accountActive: users.isActive,
+      hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
+      enrolmentCount,
+    })
+    .from(participants)
+    .leftJoin(users, eq(participants.userId, users.id))
+    .where(where)
+    .orderBy(asc(participants.name))
+    .limit(limit)
+    .offset(offset);
+
+  const [{ count }] = await db
+    .select({ count: sql`count(*)::int` })
+    .from(participants)
+    .where(where);
+
+  return {
+    participants: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      phone: r.phone,
+      job_title: r.jobTitle,
+      enrolment_count: r.enrolmentCount,
+      account_active: r.accountActive ?? false,
+      has_password: r.hasPassword ?? false,
+      created_at: r.createdAt,
+    })),
+    total: count,
+    page,
+    limit,
+  };
 }
 
 // Edit participant details (name/phone/job_title). Email is the login identity

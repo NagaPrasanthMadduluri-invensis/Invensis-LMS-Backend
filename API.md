@@ -506,6 +506,39 @@ Move a participant to another training. Marks the source enrolment `transferred`
   ```
 - **Errors:** `409` not a confirmed enrolment, or already enrolled in target · `422` same training, target full, or missing reason · `404` enrolment/target not found · `403` not an admin
 
+### 3.2.11 `GET /api/admin/participants`
+
+List all participants for the admin dashboard — **paginated**, with optional **search** by name or email. Ordered by name.
+
+- **Auth:** Bearer access token · role `admin`
+- **Query params:** `search` (optional, matches name **or** email, case-insensitive) · `page` (default `1`) · `limit` (default `20`, max `100`)
+- **`200` response:**
+  ```json
+  {
+    "participants": [
+      {
+        "id": "019f11e8-0f96-7257-a93a-39500fa37a3a",
+        "name": "Bob Learner",
+        "email": "bob.learner@acme.test",
+        "phone": "+10000000002",
+        "job_title": "Project Manager",
+        "enrolment_count": 1,
+        "account_active": true,
+        "has_password": true,
+        "created_at": "2026-06-29T05:44:08.605Z"
+      }
+    ],
+    "total": 16,
+    "page": 1,
+    "limit": 20
+  }
+  ```
+  - `enrolment_count` — number of **confirmed** enrolments.
+  - `account_active` — the linked user account's `is_active` (`false` if there's no linked account).
+  - `has_password` — `false` means the account was auto-created and the user **hasn't completed setup yet** (setup email pending; see §2.6). Use this to flag "Setup pending" in the dashboard.
+  - `total` is the count **before** pagination (use it with `page`/`limit` to render pagination controls).
+- **Errors:** `422` invalid query params (e.g. `limit` > 100) · `401` no/invalid token · `403` not an admin
+
 ### 3.3.1 `GET /api/trainer/trainings`
 
 Lists the trainings **currently assigned to the logged-in trainer** (derived from the JWT — no trainer id in the URL).

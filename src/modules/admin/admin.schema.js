@@ -56,6 +56,12 @@ export const updateParticipantSchema = z
   })
   .refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
 
+export const listParticipantsQuerySchema = z.object({
+  search: z.string().trim().min(1).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+});
+
 export const cancelEnrolmentSchema = z.object({
   reason: z.string().trim().min(1, "A reason is required"),
 });

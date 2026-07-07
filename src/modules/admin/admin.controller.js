@@ -4,6 +4,7 @@ import {
   onboardTrainerSchema,
   updateTrainerSchema,
   updateParticipantSchema,
+  listParticipantsQuerySchema,
   cancelEnrolmentSchema,
   transferEnrolmentSchema,
 } from "./admin.schema.js";
@@ -60,6 +61,11 @@ export async function updateTrainer(req, res) {
   const body = updateTrainerSchema.parse(req.body);
   const trainer = await adminService.updateTrainer(req.user.user_id, req.params.trainerId, body, req.ip);
   res.json({ trainer });
+}
+
+export async function listParticipants(req, res) {
+  const query = listParticipantsQuerySchema.parse(req.query);
+  res.json(await adminService.listParticipants(query));
 }
 
 export async function updateParticipant(req, res) {
