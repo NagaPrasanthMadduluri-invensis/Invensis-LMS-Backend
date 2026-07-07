@@ -209,9 +209,38 @@ Liveness check. No auth.
 
 ## 3. Training, admin & trainer endpoints
 
-§3.1–3.3 require a **Bearer access token** and are **role-gated** (with extra ownership checks noted per endpoint). §3.4 (`POST /api/orders`) is a machine integration and uses **HMAC request signing** instead — no user token.
+§3.1–3.3 require a **Bearer access token**. Most are **role-gated**, but some are **relationship-scoped** instead — e.g. `GET /api/learner/trainings` (§3.1) returns only the caller's own enrolments, so any authenticated user may call it (extra ownership checks are noted per endpoint). §3.4 (`POST /api/orders`) is a machine integration and uses **HMAC request signing** instead — no user token.
 
-### 3.1 `GET /api/learner/training/:trainingRef`
+### 3.1 `GET /api/learner/trainings`
+
+The authenticated user's **"My Courses"** list — every training they're enrolled in. Enrolments are attached to the account automatically the moment the learner is enrolled (CRM order, admin add, or transfer), so this is how an assigned schedule shows up in their account.
+
+- **Auth:** Bearer access token. **Not role-gated** — scoped to the caller's own enrolments, so a user whose landing `role` is `sponsor` but who also attends still sees their courses. Returns an empty list for users with no enrolments.
+- Cancelled and transferred enrolments are excluded.
+- **`200` response:**
+  ```json
+  {
+    "trainings": [
+      {
+        "id": "019ef853-bb51-7237-a97b-207b031d4be0",
+        "code": "TRN-2026-0002",
+        "title": "PRINCE2 Foundation",
+        "delivery_mode": "virtual",
+        "status": "active",
+        "start_date": "2026-10-10",
+        "end_date": "2026-10-11",
+        "timezone": "Asia/Kolkata",
+        "enrolment_status": "confirmed",
+        "meeting_released": false,
+        "enrolled_at": "2026-06-24T06:31:37.542Z"
+      }
+    ]
+  }
+  ```
+  Ordered by most recently enrolled. `meeting_released` tells the UI whether the meeting link is available yet; fetch the full detail (incl. the link, sessions, trainer) via §3.1.1.
+- **Errors:** `401` no/invalid token
+
+### 3.1.1 `GET /api/learner/training/:trainingRef`
 
 Full training detail for the authenticated **learner**, who must have a **confirmed enrolment** in this training. `:trainingRef` may be the training **UUID** or its human **code** (e.g. `TRN-2026-0001`).
 
@@ -569,7 +598,9 @@ Lists the trainings **currently assigned to the logged-in trainer** (derived fro
 
 ### 3.3.2 `GET /api/trainer/trainings/:trainingRef`
 
-Full detail for one training the trainer is assigned to, **including its sessions**. `:trainingRef` accepts the UUID or the code. Each session includes its **`id` (the `sessionId`)** — use it with `PATCH /api/trainer/sessions/:sessionId/topics` (§3.3.3).
+Full detail for one training the trainer is assigned to, **including its sessions and the enrolled participants (roster)**. `:trainingRef` accepts the UUID or the code. Each session includes its **`id` (the `sessionId`)** — use it with `PATCH /api/trainer/sessions/:sessionId/topics` (§3.3.3).
+
+> **Roster privacy:** the `participants` array intentionally exposes **only** `name`, `job_title`, and enrolment `status` (plus stable `participant_id` / `enrolment_id` and `enrolled_at`). Trainers do **not** receive learner contact details (email/phone) or account state — that's admin-only (§3.2.11).
 
 - **Auth:** Bearer access token · role `trainer` · must be currently assigned to this training
 - **`200` response:**
@@ -595,9 +626,20 @@ Full detail for one training the trainer is assigned to, **including its session
         "end_time": "2026-09-15T11:30:00.000Z",
         "status": "scheduled"
       }
+    ],
+    "participants": [
+      {
+        "enrolment_id": "019ef7fe-e43b-7c06-bfa2-38c688714990",
+        "participant_id": "019ef7fe-e43a-7bb5-a70c-4339ab6b83f9",
+        "name": "Learner User",
+        "job_title": "Project Manager",
+        "status": "confirmed",
+        "enrolled_at": "2026-06-24T04:58:57.467Z"
+      }
     ]
   }
   ```
+  `participants` is ordered by name and lists every enrolment for the training (see each row's `status` — e.g. `confirmed`, `cancelled`, `transferred`).
 - **Errors:** `401` no/invalid token · `403` not a trainer, or not assigned to this training · `404` training not found
 
 ### 3.3.3 `PATCH /api/trainer/sessions/:sessionId/topics`

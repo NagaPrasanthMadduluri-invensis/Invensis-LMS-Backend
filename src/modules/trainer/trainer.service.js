@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -6,6 +6,8 @@ import {
   trainers,
   trainerAssignments,
   schedules,
+  enrolments,
+  participants,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -121,6 +123,22 @@ export async function getTrainingDetail(userId, trainingRef) {
     .where(eq(trainingSessions.trainingId, training.id))
     .orderBy(trainingSessions.dayNumber);
 
+  // Roster for this training. Minimal fields only — a trainer sees who is
+  // enrolled and their status, NOT contact details (email/phone) or account state.
+  const roster = await db
+    .select({
+      enrolmentId: enrolments.id,
+      participantId: participants.id,
+      name: participants.name,
+      jobTitle: participants.jobTitle,
+      status: enrolments.status,
+      enrolledAt: enrolments.enrolledAt,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .where(eq(enrolments.trainingId, training.id))
+    .orderBy(asc(participants.name));
+
   return {
     id: training.id,
     training_id: training.code,
@@ -140,6 +158,14 @@ export async function getTrainingDetail(userId, trainingRef) {
       start_time: s.startTime,
       end_time: s.endTime,
       status: s.status,
+    })),
+    participants: roster.map((p) => ({
+      enrolment_id: p.enrolmentId,
+      participant_id: p.participantId,
+      name: p.name,
+      job_title: p.jobTitle,
+      status: p.status,
+      enrolled_at: p.enrolledAt,
     })),
   };
 }

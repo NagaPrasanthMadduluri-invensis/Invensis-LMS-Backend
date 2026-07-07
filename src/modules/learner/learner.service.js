@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, notInArray } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   schedules,
@@ -29,6 +29,54 @@ function computeDaysLeft(status, sessions) {
 
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// All trainings the logged-in user is enrolled in — their "My Courses" list.
+// Scoped by the user's own enrolments (capability-based: any authenticated user
+// sees only their own), so no role gate is needed. Cancelled/transferred
+// enrolments are excluded (transferred is superseded by the target enrolment).
+export async function listMyTrainings(userId) {
+  const rows = await db
+    .select({
+      id: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      deliveryMode: trainingIds.deliveryMode,
+      status: trainingIds.status,
+      meetingReleased: trainingIds.meetingReleased,
+      enrolmentStatus: enrolments.status,
+      enrolledAt: enrolments.enrolledAt,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      timezone: schedules.timezone,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .where(
+      and(
+        eq(participants.userId, userId),
+        notInArray(enrolments.status, ["cancelled", "transferred"])
+      )
+    )
+    .orderBy(desc(enrolments.enrolledAt));
+
+  return {
+    trainings: rows.map((r) => ({
+      id: r.id,
+      code: r.code,
+      title: r.title,
+      delivery_mode: r.deliveryMode,
+      status: r.status,
+      start_date: r.startDate,
+      end_date: r.endDate,
+      timezone: r.timezone,
+      enrolment_status: r.enrolmentStatus,
+      meeting_released: r.meetingReleased,
+      enrolled_at: r.enrolledAt,
+    })),
+  };
+}
 
 export async function getTrainingDetail(userId, trainingRef) {
   const [training] = await db
