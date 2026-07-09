@@ -705,6 +705,61 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
 
 ---
 
+## 3.5 Profile (self-service) — `/api/me`
+
+The signed-in user's own profile. **Capability-based:** any authenticated user (any role) can call these — everything is scoped to their own account. Personal + professional fields live on a `user_profiles` record; `email` is **read-only** (login identity), and the display `name` on the account is kept in sync from `first_name + last_name`.
+
+### 3.5.1 `GET /api/me/profile`
+
+- **Auth:** Bearer access token
+- **`200` response:**
+  ```json
+  {
+    "user": { "id": "019ef342-...", "name": "Lena Ng", "email": "lena@acme.test", "role": "learner", "is_active": true },
+    "profile": {
+      "first_name": "Lena", "last_name": "Ng",
+      "phone": "+91 90000 00001", "country": "India",
+      "time_zone": "Asia/Kolkata", "preferred_language": "en",
+      "company_name": "Acme", "job_title": "PM", "department": "Delivery",
+      "years_experience": 6, "linkedin_url": "https://linkedin.com/in/lena",
+      "avatar_key": "avatars/019ef342-.../e90a....png",
+      "avatar_url": "https://<r2>/lms-resources/avatars/...?X-Amz-Signature=..."
+    }
+  }
+  ```
+  `avatar_url` is a short-lived (1h) presigned GET URL for the photo (null if none). All profile fields are null until set.
+- **Errors:** `401` no/invalid token
+
+### 3.5.2 `PATCH /api/me/profile`
+
+Update any subset of profile fields. **`email` is not accepted** (read-only). Send `null` to clear a field. Editing `first_name`/`last_name` re-syncs the account display `name` (and the linked participant record's name); editing `phone`/`job_title` syncs to the participant record too.
+
+- **Auth:** Bearer access token
+- **Body (all optional, ≥1 required):** `first_name, last_name, phone, country, time_zone, preferred_language, company_name, job_title, department, years_experience` (int 0–80), `linkedin_url` (valid URL), `avatar_key`
+- **`200` response:** the same shape as §3.5.1 (updated).
+- **Errors:** `422` empty/invalid body (e.g. bad `linkedin_url`, out-of-range `years_experience`) · `401` no/invalid token
+
+### 3.5.3 `POST /api/me/profile/avatar-upload-url`
+
+Get a short-lived **presigned PUT URL** so the browser can upload a profile photo directly to object storage (R2). The API never receives the file bytes.
+
+- **Auth:** Bearer access token
+- **Body:** `{ "content_type": "image/jpeg" | "image/png" | "image/webp" }`
+- **`200` response:**
+  ```json
+  {
+    "upload_url": "https://<r2>/lms-resources/avatars/<user>/<uuid>.png?X-Amz-Signature=...",
+    "avatar_key": "avatars/<user>/<uuid>.png",
+    "method": "PUT",
+    "headers": { "Content-Type": "image/png" },
+    "expires_in": 300
+  }
+  ```
+  **Frontend flow:** (1) call this → (2) `PUT` the file bytes to `upload_url` with the `Content-Type` header from `headers` → (3) `PATCH /api/me/profile` with `{ "avatar_key": <the returned key> }`. The next `GET /api/me/profile` returns a viewable `avatar_url`.
+- **Errors:** `422` unsupported `content_type` · `503` file storage not configured (R2 env not set) · `401` no/invalid token
+
+---
+
 ## 4. Frontend integration
 
 ### 4.1 Recommended flow

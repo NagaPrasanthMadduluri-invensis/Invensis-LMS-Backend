@@ -38,6 +38,30 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/* ── user_profiles (1:1 with users) ────────────────────────
+   Extended, self-editable profile fields for the account owner. Kept out of
+   `users` (which stays lean) and works for any role. `name` on users remains
+   the display name, synced from first_name + last_name. avatar_key points at
+   the object in R2 (see lib/storage.js). */
+export const userProfiles = pgTable("user_profiles", {
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  userId: uuid("user_id").notNull().unique().references(() => users.id),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  phone: text("phone"),
+  country: text("country"),
+  timeZone: text("time_zone"),
+  preferredLanguage: text("preferred_language"),
+  companyName: text("company_name"),
+  jobTitle: text("job_title"),
+  department: text("department"),
+  yearsExperience: integer("years_experience"),
+  linkedinUrl: text("linkedin_url"),
+  avatarKey: text("avatar_key"), // R2 object key
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ── password_setup_tokens ─────────────────────────────────
    Single-use, hashed tokens emailed to a user so they can set their initial
    password ('setup') or reset a forgotten one ('reset'). Only the SHA-256 hash

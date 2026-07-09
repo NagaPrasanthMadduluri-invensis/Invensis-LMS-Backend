@@ -45,6 +45,15 @@ const schema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_SECURE: boolFromEnv.default(false),
+
+  // Object storage (Cloudflare R2, S3-compatible) for profile photos etc.
+  // All optional — if unset, file-upload endpoints return 503 (not configured).
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_ENDPOINT: z.string().optional(),
+  S3_API_ENDPOINT: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

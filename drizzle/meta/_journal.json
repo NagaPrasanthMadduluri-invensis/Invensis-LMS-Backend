@@ -36,6 +36,13 @@
       "when": 1783313908384,
       "tag": "0004_nice_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783578595315,
+      "tag": "0005_familiar_mandarin",
+      "breakpoints": true
     }
   ]
 }
