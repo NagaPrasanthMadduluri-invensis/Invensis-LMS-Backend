@@ -57,6 +57,7 @@ export async function ingestOrder(actorId, payload, ip) {
 
   const sch = payload.schedule;
   const scheduleCode = sch.schedule_id;
+  const learners = payload.learners ?? []; // optional — order may precede learner assignment
 
   // Users created here start with no password; after commit we email each a
   // setup link so they can set one. Collected inside the tx, sent after.
@@ -166,7 +167,7 @@ export async function ingestOrder(actorId, payload, ip) {
 
     /* ── 4. Participants + enrolments (idempotent) ── */
     let newEnrolments = 0;
-    for (const l of payload.learners) {
+    for (const l of learners) {
       const name = learnerName(l);
 
       // Find or create the learner's user account (no password — a setup email
@@ -266,7 +267,7 @@ export async function ingestOrder(actorId, payload, ip) {
       training_id: training.id,
       training_code: training.code,
       training_created: trainingCreated,
-      participants: payload.learners.length,
+      participants: learners.length,
       new_enrolments: newEnrolments,
       enrolled_count: cnt.rows?.[0]?.n ?? 0,
       sponsor_email: payload.buyer?.email ?? null,

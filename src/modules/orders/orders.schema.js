@@ -47,7 +47,7 @@ export const orderIntakeSchema = z
         duration_hours: z.number().optional(),
       })
       .passthrough(),
-    // The buyer = the sponsor for this order (may also be one of the learners).
+    // The buyer = the sponsor for this order (required; may also be a learner).
     buyer: z
       .object({
         customer_id: z.string().optional(),
@@ -58,9 +58,9 @@ export const orderIntakeSchema = z
         phone: z.string().optional(),
         company_name: z.string().optional(),
       })
-      .passthrough()
-      .optional(),
-    learners: z.array(learnerSchema).min(1),
+      .passthrough(),
+    // Optional — an order may be placed before learners are assigned.
+    learners: z.array(learnerSchema).optional(),
     schedule: scheduleSchema,
   })
   .passthrough();

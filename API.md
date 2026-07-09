@@ -349,6 +349,9 @@ Lists all Training IDs for the admin trainings view.
         "end_date": "2026-09-18",
         "duration_hours": 32,
         "timezone": "Asia/Kolkata",
+        "meeting_url": "https://zoom.us/j/123456789",
+        "meeting_platform": "zoom",
+        "meeting_released": false,
         "trainer_assigned": true,
         "trainer_name": "Trainer User"
       }
@@ -356,6 +359,7 @@ Lists all Training IDs for the admin trainings view.
   }
   ```
 - `trainer_assigned` is `false` / `trainer_name` is `null` when no trainer is currently assigned.
+- Meeting fields are shown to the admin **regardless of `meeting_released`** (`null` until a link is set). `meeting_released` reflects whether learners can see it.
 
 ### 3.2.2 `GET /api/admin/trainings/:trainingId`
 
@@ -383,6 +387,10 @@ Full admin detail for one training: schedule, the assigned trainer (if any), and
     "end_time": "17:00:00",
     "session_dates": ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"],
     "venue": null,
+    "meeting_url": "https://zoom.us/j/123456789",
+    "meeting_platform": "zoom",
+    "meeting_released": false,
+    "meeting_triggered_at": "2026-06-24T04:59:19.151Z",
     "trainer": {
       "id": "019f03c1-95ef-7992-82da-443ac54eca0d",
       "name": "Trainer User",
@@ -668,8 +676,8 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
   - `order_id` (string) — also the **idempotency key**
   - `order.payment_status` — must be `"paid"` (otherwise `422`); `order.purchase_type` derives the bucket
   - `course.course_name`
-  - `learners[]` — each requires `email` (plus optional name/phone)
-  - `buyer` (optional) — the order's **sponsor**; needs `email` (plus optional `first_name`/`last_name`/`name`/`phone`/`company_name`)
+  - `buyer` (**required**) — the order's **sponsor**; needs `email` (plus optional `first_name`/`last_name`/`name`/`phone`/`company_name`). Missing/invalid → `422`.
+  - `learners[]` (**optional**) — each requires `email` (plus optional name/phone). May be omitted or empty when an order is placed before learners are assigned; the schedule, Training ID, sessions, order record, and sponsor link are still created (with **zero enrolments**), and learners can be added later.
   - `schedule` — `schedule_id`, `start_date`, `end_date`, `start_time`, `end_time`, `session_dates[]` (plus optional `batch_type`, `delivery_format`, `venue`, `timezone`, …)
   - Extra fields are accepted and stored for traceability.
 - **Signing example (Node):**
