@@ -297,7 +297,7 @@ Single overview snapshot for the learner landing page: profile summary, progress
   ```
 - **`stats`** — `completion_rate = completed / total_enrolments` (0–1). `learning_hours` sums `duration_hours` across completed trainings. `certificates_earned` equals the length of `certificates`.
 - **`my_courses`** — the caller's enrolments (cancelled/transferred excluded), split into `in_progress` (training `ongoing`), `upcoming` (not yet started), and `completed`. Each card carries `progress_pct` (`completed_sessions / total_sessions`, or `100` once finished) and `days_until_start` (`0` while ongoing).
-- **`certificates`** — one entry per finished training (enrolment or training marked `completed`). There is **no dedicated certificate store yet**, so this is derived from completed enrolments; `completed_at` is the enrolment's last-updated time (falls back to the schedule end date).
+- **`certificates`** — one entry per finished training (enrolment or training marked `completed`, e.g. via §3.2.9a/§3.2.9b). There is **no dedicated certificate store yet**, so this is derived from completed enrolments. Each entry carries the data a certificate is printed from: `training_code`, `title` (course name), `duration_hours`, and the scheduled `start_date`/`end_date` (the "from/to" range); `completed_at` is the enrolment's last-updated time (falls back to the schedule end date). `eligible` is `true` (completion grants eligibility); `downloadable` is a forward-looking flag currently always `false` — actually downloading the certificate will later be gated on the learner finishing the feedback + survey forms, and certificate PDF generation itself is not built yet.
 - **`journey`** — a chronological (oldest → newest) timeline of `enrolled` / `completed` milestones for rendering a progress trail.
 - **`upcoming_cohorts`** — up to 8 **active** offerings starting today or later that the learner is **not already enrolled in**, ordered by soonest start. `seats_left` = capacity − enrolled; `filling_fast` is `true` when ≤25% of seats remain, `is_full` when none do. Use these to drive "Register now" / "Filling fast" calls-to-action.
 - **Errors:** `401` no/invalid token
@@ -378,6 +378,62 @@ Full training detail for the authenticated **learner**, who must have a **confir
   - `days_left`: whole days to the first upcoming session; `0` if `status` is `ongoing`; `null` if `completed`/`cancelled`.
   - `sessions` are ordered by `day_number`; `planned_topics` may be `null`. (There is no session `title`.) Session `start_time`/`end_time` are ISO‑8601 UTC timestamps.
 - **Errors:** `401` no/invalid token · `403` not a learner **or** not enrolled in this training · `404` training not found
+
+### 3.1.2 `GET /api/learner/certificates`
+
+The caller's **training certificates** — one per completed enrolment. A learner becomes **eligible** for a certificate once an admin marks their enrolment `completed` (§3.2.9a/§3.2.9b). Actually **downloading** it is gated on the learner submitting the post-training feedback survey (§3.1.3), which **issues** the certificate. Scoped to the caller's own enrolments — **not role-gated** (like §3.1.0/§3.1).
+
+- **Auth:** Bearer access token
+- **`200` response:**
+  ```json
+  {
+    "certificates": [
+      {
+        "training_id": "019f03c1-95ea-7cf3-bf75-f3c688a8f0cf",
+        "training_code": "TRN-2026-0001",
+        "title": "PMP Certification Training",
+        "delivery_mode": "virtual",
+        "start_date": "2026-09-15",
+        "end_date": "2026-09-18",
+        "participant_name": "Learner User",
+        "activity_id": "INL000006",
+        "certificate_id": "INVLZR7924",
+        "issued": true,
+        "issued_at": "2026-07-10T11:36:11.755Z",
+        "completed_at": "2026-07-10T10:41:03.597Z"
+      }
+    ]
+  }
+  ```
+- **Field notes (these are the values printed on the certificate):**
+  - `title` — the course name.
+  - `start_date`/`end_date` — the scheduled date range ("which took place …"). Delivery mode drives the "via …" phrase.
+  - `participant_name` — the learner's name.
+  - `activity_id` — the linked **schedule event code** (e.g. `INL000006`), looked up from the training. Falls back to the training code when the training has no linked schedule.
+  - `certificate_id` — the generated, stable certificate code (e.g. `INVLZR7924`); **`null` until issued**.
+  - `issued` — `true` once the feedback survey has been submitted (the certificate is unlocked/downloadable). `issued_at` is when that happened.
+- **Errors:** `401` no/invalid token
+
+### 3.1.3 `POST /api/learner/certificates/:trainingRef/survey`
+
+Submit the **post-training feedback survey**, which **issues (unlocks)** the certificate. Requires a **completed** enrolment owned by the caller. **Idempotent** — if already issued, the existing certificate is returned unchanged (the first survey stands). `:trainingRef` accepts the training UUID or code.
+
+- **Auth:** Bearer access token
+- **Body:**
+  ```json
+  { "overall_rating": 5, "trainer_rating": 5, "content_rating": 4, "would_recommend": true, "comments": "Great sessions" }
+  ```
+  Ratings are integers `1`–`5` (all three required); `would_recommend` is a boolean (required); `comments` is optional (≤2000 chars).
+- **`201` response:** `{ "certificate": { …same shape as §3.1.2, now issued } }`
+- **Errors:** `403` not eligible (no completed enrolment for this training, or not the caller's) · `422` invalid survey body · `401` no/invalid token
+
+### 3.1.4 `GET /api/learner/certificates/:trainingRef`
+
+Full data for **one** certificate, for rendering the printable/downloadable document. `:trainingRef` accepts the UUID or code.
+
+- **Auth:** Bearer access token
+- **`200` response:** `{ "certificate": { …same shape as §3.1.2 } }`
+- **Errors:** `403` not eligible, **or** eligible but the survey hasn't been submitted yet (`"Complete the feedback survey to unlock your certificate"`) · `401` no/invalid token
 
 ### 3.2 `PATCH /api/admin/trainings/:trainingId`
 
@@ -726,6 +782,28 @@ Cancel an enrolment (frees the seat, recomputes `enrolled_count`). **Reason requ
 - **Body:** `{ "reason": "duplicate registration" }`
 - **`200` response:** `{ "id": "...", "status": "cancelled" }`
 - **Errors:** `409` already cancelled · `422` missing reason · `404` enrolment not found · `403` not an admin
+
+### 3.2.9a `PATCH /api/admin/enrolments/:enrolmentId/complete`
+
+Mark a single enrolment **completed** — the learner successfully finished the training. This is the **anchor for certificate eligibility**: once an enrolment is `completed`, the learner portal treats them as eligible for the certificate (see §3.1.0 `certificates`). **One-way** — only a `confirmed` enrolment can be completed, and it stays completed. Completion is **not** a seat event, so `enrolled_count` is left unchanged (unlike cancel/transfer). Audited.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** none
+- **`200` response:** `{ "id": "...", "status": "completed" }`
+- **Errors:** `409` already completed · `422` not a confirmed enrolment (e.g. cancelled/transferred/failed) · `404` enrolment not found · `403` not an admin
+
+### 3.2.9b `PATCH /api/admin/trainings/:trainingId/enrolments/complete-all`
+
+Bulk **"mark all completed"** — flips **every currently-`confirmed`** enrolment in the training to `completed` in one call. Already-completed, cancelled, and transferred enrolments are skipped. `:trainingId` accepts the UUID or the code. Audited (one entry with the count). Does not change the training's own `status`.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** none
+- **`200` response:**
+  ```json
+  { "training_id": "TRN-2026-0001", "completed": 4 }
+  ```
+  `completed` is how many enrolments were actually flipped (`0` if none were confirmed).
+- **Errors:** `404` training not found · `403` not an admin
 
 ### 3.2.10 `PATCH /api/admin/enrolments/:enrolmentId/transfer`
 

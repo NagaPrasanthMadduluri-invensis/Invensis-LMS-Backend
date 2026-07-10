@@ -763,6 +763,69 @@ export async function cancelEnrolment(adminId, enrolmentId, reason, ip) {
   });
 }
 
+// Mark a single enrolment 'completed' — the learner successfully finished the
+// training. This is the anchor for certificate eligibility in the learner
+// portal (see learner.service isFinished/certificates). One-way: only a
+// 'confirmed' enrolment can be completed, and it stays completed.
+// Completion is not a seat event (unlike cancel/transfer), so enrolled_count
+// is intentionally left untouched.
+export async function completeEnrolment(adminId, enrolmentId, ip) {
+  return db.transaction(async (tx) => {
+    const [e] = await tx.select().from(enrolments).where(eq(enrolments.id, enrolmentId)).limit(1);
+    if (!e) throw new AppError("Enrolment not found", 404);
+    if (e.status === "completed") throw new AppError("Enrolment is already completed", 409);
+    if (e.status !== "confirmed") {
+      throw new AppError("Only a confirmed enrolment can be marked completed", 422);
+    }
+
+    await tx
+      .update(enrolments)
+      .set({ status: "completed", updatedAt: new Date() })
+      .where(eq(enrolments.id, enrolmentId));
+
+    await writeAudit(tx, {
+      entityType: "enrolment",
+      entityId: enrolmentId,
+      action: "enrolment_completed",
+      actorId: adminId,
+      before: { status: e.status },
+      after: { status: "completed" },
+      ipAddress: ip,
+    });
+
+    return { id: enrolmentId, status: "completed" };
+  });
+}
+
+// Bulk-complete every currently-confirmed enrolment in a training (the "mark
+// all completed" action). Already-completed and non-confirmed (cancelled /
+// transferred / failed) enrolments are left as-is. Returns how many were
+// completed so the UI can report it.
+export async function completeAllEnrolments(adminId, trainingRef, ip) {
+  return db.transaction(async (tx) => {
+    const training = await resolveTraining(tx, trainingRef);
+
+    const updated = await tx
+      .update(enrolments)
+      .set({ status: "completed", updatedAt: new Date() })
+      .where(and(eq(enrolments.trainingId, training.id), eq(enrolments.status, "confirmed")))
+      .returning({ id: enrolments.id });
+
+    if (updated.length > 0) {
+      await writeAudit(tx, {
+        entityType: "training_id",
+        entityId: training.id,
+        action: "enrolments_bulk_completed",
+        actorId: adminId,
+        after: { training_code: training.code, completed: updated.length },
+        ipAddress: ip,
+      });
+    }
+
+    return { training_id: training.code, completed: updated.length };
+  });
+}
+
 /* ─────────────────────────────────────────────────────────
    Admin dashboard — a single overview snapshot for the landing page.
    Aggregates users, trainers, courses (Training IDs), enrolments,

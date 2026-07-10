@@ -43,6 +43,13 @@
       "when": 1783578595315,
       "tag": "0005_familiar_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783682794788,
+      "tag": "0006_old_psynapse",
+      "breakpoints": true
     }
   ]
 }

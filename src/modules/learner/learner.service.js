@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
@@ -8,6 +9,7 @@ import {
   trainers,
   participants,
   enrolments,
+  certificates,
   users,
   userProfiles,
 } from "../../db/schema.js";
@@ -335,7 +337,19 @@ export async function getDashboard(userId) {
         title: r.title,
         delivery_mode: r.deliveryMode,
         duration_hours: r.durationHours,
+        // Certificate content: the training's scheduled date range is the
+        // "from/to" printed on the certificate; title = course name; the
+        // participant's name comes from their account.
+        start_date: r.startDate,
+        end_date: r.endDate,
         completed_at: completedAt,
+        // Completing the training makes the learner ELIGIBLE for the
+        // certificate. Actually downloading it will later be gated on the
+        // learner finishing the feedback + survey forms, and the certificate
+        // PDF generation itself is not built yet — so 'downloadable' is a
+        // forward-looking flag defaulted to false until that lands.
+        eligible: true,
+        downloadable: false,
       });
       journey.push({
         type: "completed",
@@ -445,5 +459,181 @@ export async function getDashboard(userId) {
     certificates,
     journey,
     upcoming_cohorts: upcomingCohorts,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Certificates (learner training certificates)
+
+   Flow: an enrolment marked 'completed' by an admin makes the learner
+   ELIGIBLE. Downloading is gated on the learner submitting the post-training
+   feedback survey — that submission "issues" the certificate (creates the
+   certificates row with a stable code). The printable certificate shows the
+   participant name, course title, scheduled date range, the schedule event
+   code (Activity ID) and the generated Certificate ID.
+   ───────────────────────────────────────────────────────── */
+
+// Stable, human-looking certificate code derived from the enrolment id, e.g.
+// "INVLJA4184" — deterministic so it never changes for a given enrolment.
+function generateCertificateCode(enrolmentId) {
+  const n = parseInt(createHash("sha1").update(enrolmentId).digest("hex").slice(0, 12), 16);
+  const L = "ABCDEFGHIJKLMNPQRSTUVWXYZ"; // drop 'O' to avoid 0/O confusion
+  const l1 = L[n % L.length];
+  const l2 = L[Math.floor(n / L.length) % L.length];
+  const digits = String(n % 10000).padStart(4, "0");
+  return `INVL${l1}${l2}${digits}`;
+}
+
+// The Activity ID printed on the certificate is the linked schedule's event
+// code (e.g. "INL000099"); manually-created trainings have no schedule, so we
+// fall back to the training code.
+function activityCodeFor(eventCode, trainingCode) {
+  return eventCode ?? trainingCode;
+}
+
+// Find the caller's eligible (completed) enrolment for a training ref (UUID or
+// code), joined with the training, its schedule and any issued certificate.
+// Returns null when the caller has no such eligible enrolment.
+async function findEligibleEnrolment(userId, trainingRef) {
+  const cond = UUID_RE.test(trainingRef)
+    ? eq(trainingIds.id, trainingRef)
+    : eq(trainingIds.code, trainingRef);
+  const [row] = await db
+    .select({
+      enrolmentId: enrolments.id,
+      enrolmentUpdatedAt: enrolments.updatedAt,
+      trainingId: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      deliveryMode: trainingIds.deliveryMode,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      eventCode: schedules.externalScheduleCode,
+      participantName: participants.name,
+      certCode: certificates.certificateCode,
+      certActivity: certificates.activityCode,
+      issuedAt: certificates.issuedAt,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .where(
+      and(
+        eq(participants.userId, userId),
+        cond,
+        sql`(${enrolments.status} = 'completed' OR ${trainingIds.status} = 'completed')`
+      )
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+// Shape the render/list payload for one certificate row.
+function certificateDto(r) {
+  const issued = !!r.certCode;
+  return {
+    training_id: r.trainingId,
+    training_code: r.code,
+    title: r.title, // course name printed on the certificate
+    delivery_mode: r.deliveryMode,
+    start_date: r.startDate,
+    end_date: r.endDate,
+    participant_name: r.participantName,
+    activity_id: r.certActivity ?? activityCodeFor(r.eventCode, r.code),
+    certificate_id: r.certCode ?? null,
+    issued, // survey submitted → certificate unlocked/downloadable
+    issued_at: r.issuedAt ?? null,
+    completed_at: r.enrolmentUpdatedAt ?? r.endDate ?? null,
+  };
+}
+
+// List every certificate the caller is eligible for (their completed
+// enrolments), each annotated with whether it's been issued (survey done).
+export async function listCertificates(userId) {
+  const rows = await db
+    .select({
+      enrolmentId: enrolments.id,
+      enrolmentUpdatedAt: enrolments.updatedAt,
+      trainingId: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      deliveryMode: trainingIds.deliveryMode,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      eventCode: schedules.externalScheduleCode,
+      participantName: participants.name,
+      certCode: certificates.certificateCode,
+      certActivity: certificates.activityCode,
+      issuedAt: certificates.issuedAt,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .where(
+      and(
+        eq(participants.userId, userId),
+        sql`(${enrolments.status} = 'completed' OR ${trainingIds.status} = 'completed')`
+      )
+    )
+    .orderBy(desc(enrolments.enrolledAt));
+
+  return { certificates: rows.map(certificateDto) };
+}
+
+// Full data for the printable certificate. 403 until the survey is submitted
+// (the certificate must be issued to be viewed/downloaded).
+export async function getCertificate(userId, trainingRef) {
+  const row = await findEligibleEnrolment(userId, trainingRef);
+  if (!row) throw new AppError("You are not eligible for this certificate", 403);
+  if (!row.certCode) {
+    throw new AppError("Complete the feedback survey to unlock your certificate", 403);
+  }
+  return { certificate: certificateDto(row) };
+}
+
+// Submit the post-training feedback survey and issue the certificate. Requires
+// a completed enrolment owned by the caller. Idempotent — if already issued,
+// the existing certificate is returned unchanged.
+export async function issueCertificateWithSurvey(userId, trainingRef, responses) {
+  const row = await findEligibleEnrolment(userId, trainingRef);
+  if (!row) throw new AppError("You are not eligible for this certificate", 403);
+
+  // Already issued → return as-is (don't overwrite the recorded survey).
+  if (row.certCode) return { certificate: certificateDto(row) };
+
+  const activityCode = activityCodeFor(row.eventCode, row.code);
+  const certificateCode = generateCertificateCode(row.enrolmentId);
+
+  const [created] = await db
+    .insert(certificates)
+    .values({
+      enrolmentId: row.enrolmentId,
+      certificateCode,
+      activityCode,
+      surveyResponses: responses,
+    })
+    .onConflictDoNothing({ target: certificates.enrolmentId })
+    .returning();
+
+  // Race: another request issued it first — read it back.
+  const issued =
+    created ??
+    (await db
+      .select({ certificateCode: certificates.certificateCode, activityCode: certificates.activityCode, issuedAt: certificates.issuedAt })
+      .from(certificates)
+      .where(eq(certificates.enrolmentId, row.enrolmentId))
+      .limit(1))[0];
+
+  return {
+    certificate: certificateDto({
+      ...row,
+      certCode: issued.certificateCode,
+      certActivity: issued.activityCode,
+      issuedAt: issued.issuedAt,
+    }),
   };
 }

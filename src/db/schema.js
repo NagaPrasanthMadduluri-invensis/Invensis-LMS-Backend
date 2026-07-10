@@ -250,6 +250,23 @@ export const enrolments = pgTable(
   })
 );
 
+/* ── certificates (learner training certificates) ──────────
+   Distinct from trainers.certificates (a trainer's own professional certs).
+   A learner becomes ELIGIBLE for a certificate once their enrolment is marked
+   'completed' (see admin completeEnrolment). Actually unlocking the download
+   requires submitting the post-training feedback survey — that submission
+   creates the row here, which stores the responses AND "issues" the
+   certificate: a stable certificate code plus a snapshot of the activity/event
+   code printed on it. One row per enrolment; its existence == unlocked. */
+export const certificates = pgTable("certificates", {
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  enrolmentId: uuid("enrolment_id").notNull().unique().references(() => enrolments.id),
+  certificateCode: text("certificate_code").notNull().unique(), // e.g. INVLJA4184
+  activityCode: text("activity_code"), // schedule event code snapshot (falls back to training code)
+  surveyResponses: jsonb("survey_responses").notNull(),
+  issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ── audit_log (append-only) ───────────────────────────────
    NOTE: the spec mandates INSERT-only at the PostgreSQL role level. That is a
    deploy-time hardening step (a dedicated DB role with no UPDATE/DELETE) — the

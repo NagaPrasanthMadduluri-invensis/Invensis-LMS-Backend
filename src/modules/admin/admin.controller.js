@@ -89,6 +89,16 @@ export async function cancelEnrolment(req, res) {
   res.json(result);
 }
 
+export async function completeEnrolment(req, res) {
+  const result = await adminService.completeEnrolment(req.user.user_id, req.params.enrolmentId, req.ip);
+  res.json(result);
+}
+
+export async function completeAllEnrolments(req, res) {
+  const result = await adminService.completeAllEnrolments(req.user.user_id, req.params.trainingId, req.ip);
+  res.json(result);
+}
+
 export async function transferEnrolment(req, res) {
   const { training_id, reason } = transferEnrolmentSchema.parse(req.body);
   const result = await adminService.transferEnrolment(

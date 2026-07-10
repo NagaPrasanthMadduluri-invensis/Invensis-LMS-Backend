@@ -70,6 +70,13 @@ router.patch(
 );
 
 router.patch(
+  "/enrolments/:enrolmentId/complete",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.completeEnrolment)
+);
+
+router.patch(
   "/enrolments/:enrolmentId/transfer",
   verifyToken,
   requireRole("admin"),
@@ -88,6 +95,13 @@ router.post(
   verifyToken,
   requireRole("admin"),
   asyncHandler(ctrl.addParticipant)
+);
+
+router.patch(
+  "/trainings/:trainingId/enrolments/complete-all",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.completeAllEnrolments)
 );
 
 router.patch(

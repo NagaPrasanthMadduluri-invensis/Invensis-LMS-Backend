@@ -29,4 +29,26 @@ router.get(
   asyncHandler(ctrl.getTrainingDetail)
 );
 
+// Certificates — scoped to the caller's own completed enrolments
+// (capability-based, no role gate, like /dashboard and /trainings).
+router.get(
+  "/certificates",
+  verifyToken,
+  asyncHandler(ctrl.listCertificates)
+);
+
+// Submit the post-training feedback survey → issues (unlocks) the certificate.
+router.post(
+  "/certificates/:trainingRef/survey",
+  verifyToken,
+  asyncHandler(ctrl.submitCertificateSurvey)
+);
+
+// Printable certificate data — 403 until the survey has been submitted.
+router.get(
+  "/certificates/:trainingRef",
+  verifyToken,
+  asyncHandler(ctrl.getCertificate)
+);
+
 export default router;
