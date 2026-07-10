@@ -211,6 +211,97 @@ Liveness check. No auth.
 
 §3.1–3.3 require a **Bearer access token**. Most are **role-gated**, but some are **relationship-scoped** instead — e.g. `GET /api/learner/trainings` (§3.1) returns only the caller's own enrolments, so any authenticated user may call it (extra ownership checks are noted per endpoint). §3.4 (`POST /api/orders`) is a machine integration and uses **HMAC request signing** instead — no user token.
 
+### 3.1.0 `GET /api/learner/dashboard`
+
+Single overview snapshot for the learner landing page: profile summary, progress stats, a chronological learning journey, the learner's enrolments grouped by lifecycle, certificates earned, and **upcoming cohorts open to register for** (a nudge to enrol).
+
+- **Auth:** Bearer access token. **Not role-gated** — scoped to the caller's own enrolments (same as §3.1), so any authenticated user gets their journey plus the marketing cohort list. A user with no enrolments gets zeroed stats and empty lists (but still sees `upcoming_cohorts`).
+- **`200` response:**
+  ```json
+  {
+    "generated_at": "2026-07-10T07:37:05.207Z",
+    "learner": {
+      "id": "019f03c1-936c-7cba-9a23-289b54773423",
+      "name": "Learner User",
+      "email": "learner@invensis.test",
+      "avatar_url": null,
+      "job_title": null,
+      "company_name": null,
+      "country": null,
+      "member_since": "2026-06-26T11:47:25.676Z"
+    },
+    "stats": {
+      "total_enrolments": 1,
+      "in_progress": 0,
+      "upcoming": 1,
+      "completed": 0,
+      "certificates_earned": 0,
+      "learning_hours": 0,
+      "completion_rate": 0
+    },
+    "my_courses": {
+      "in_progress": [],
+      "upcoming": [
+        {
+          "id": "019f03c1-95ea-7cf3-bf75-f3c688a8f0cf",
+          "code": "TRN-2026-0001",
+          "title": "PMP Certification Training",
+          "delivery_mode": "virtual",
+          "bucket": "direct_online",
+          "status": "active",
+          "enrolment_status": "confirmed",
+          "start_date": "2026-09-15",
+          "end_date": "2026-09-18",
+          "timezone": "Asia/Kolkata",
+          "duration_hours": 32,
+          "enrolled_at": "2026-06-26T11:47:26.323Z",
+          "total_sessions": 4,
+          "completed_sessions": 0,
+          "progress_pct": 0,
+          "days_until_start": 67,
+          "meeting_released": false
+        }
+      ],
+      "completed": []
+    },
+    "certificates": [],
+    "journey": [
+      {
+        "type": "enrolled",
+        "date": "2026-06-26T11:47:26.323Z",
+        "training_code": "TRN-2026-0001",
+        "title": "PMP Certification Training"
+      }
+    ],
+    "upcoming_cohorts": [
+      {
+        "schedule_id": "019f03c1-95e8-7165-9f27-305941405638",
+        "title": "PMP Certification Training",
+        "bucket": "direct_online",
+        "delivery_mode": "virtual",
+        "batch_type": "weekday",
+        "duration_hours": 32,
+        "start_date": "2026-09-15",
+        "end_date": "2026-09-18",
+        "start_time": "09:00:00",
+        "end_time": "17:00:00",
+        "timezone": "Asia/Kolkata",
+        "capacity": 20,
+        "seats_left": 16,
+        "starts_in_days": 67,
+        "filling_fast": false,
+        "is_full": false
+      }
+    ]
+  }
+  ```
+- **`stats`** — `completion_rate = completed / total_enrolments` (0–1). `learning_hours` sums `duration_hours` across completed trainings. `certificates_earned` equals the length of `certificates`.
+- **`my_courses`** — the caller's enrolments (cancelled/transferred excluded), split into `in_progress` (training `ongoing`), `upcoming` (not yet started), and `completed`. Each card carries `progress_pct` (`completed_sessions / total_sessions`, or `100` once finished) and `days_until_start` (`0` while ongoing).
+- **`certificates`** — one entry per finished training (enrolment or training marked `completed`). There is **no dedicated certificate store yet**, so this is derived from completed enrolments; `completed_at` is the enrolment's last-updated time (falls back to the schedule end date).
+- **`journey`** — a chronological (oldest → newest) timeline of `enrolled` / `completed` milestones for rendering a progress trail.
+- **`upcoming_cohorts`** — up to 8 **active** offerings starting today or later that the learner is **not already enrolled in**, ordered by soonest start. `seats_left` = capacity − enrolled; `filling_fast` is `true` when ≤25% of seats remain, `is_full` when none do. Use these to drive "Register now" / "Filling fast" calls-to-action.
+- **Errors:** `401` no/invalid token
+
 ### 3.1 `GET /api/learner/trainings`
 
 The authenticated user's **"My Courses"** list — every training they're enrolled in. Enrolments are attached to the account automatically the moment the learner is enrolled (CRM order, admin add, or transfer), so this is how an assigned schedule shows up in their account.
@@ -325,6 +416,111 @@ Admin action. Two **independent, both-optional** operations in one call — send
   ```
 - **Errors:** `400` trainer not found/inactive · `409` that trainer is already assigned · `422` min-seats not met or invalid body · `404` training not found · `403` not an admin
 - **Note:** `:trainingId` accepts the training **UUID or code** (e.g. `TRN-2026-0001`).
+
+### 3.2.0 `GET /api/admin/dashboard`
+
+Single overview snapshot for the admin dashboard landing page. Aggregates users, trainers, courses (Training IDs), enrolments, certificates and (placeholder) support tickets, plus a few preview lists.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:**
+  ```json
+  {
+    "generated_at": "2026-07-10T07:05:39.772Z",
+    "users": {
+      "total": 7,
+      "active": 7,
+      "inactive": 0,
+      "pending_setup": 0,
+      "by_role": { "admin": 1, "trainer": 1, "sponsor": 1, "learner": 4 },
+      "participants_total": 4
+    },
+    "trainers": {
+      "total": 1,
+      "active": 1,
+      "inactive": 0,
+      "assigned": 1,
+      "unassigned": 0,
+      "total_certificates": 0
+    },
+    "courses": {
+      "total": 1,
+      "by_status": { "pending": 0, "active": 1, "ongoing": 0, "completed": 0, "cancelled": 0 },
+      "upcoming": 1,
+      "ongoing": 0,
+      "completed": 0,
+      "meeting_released": 0,
+      "total_capacity": 20,
+      "total_enrolled": 4,
+      "fill_rate": 0.2
+    },
+    "enrolments": {
+      "total": 4,
+      "confirmed": 4,
+      "completed": 0,
+      "cancelled": 0,
+      "transferred": 0,
+      "failed": 0
+    },
+    "certificates": {
+      "issued": 0,
+      "trainer_certificates": 0,
+      "note": "Derived from completed enrolments; a dedicated certificate store is not yet implemented."
+    },
+    "tickets": {
+      "supported": false,
+      "total": 0,
+      "open": 0,
+      "in_progress": 0,
+      "resolved": 0,
+      "closed": 0,
+      "note": "Support ticketing is not yet available; showing placeholder values."
+    },
+    "upcoming_trainings": [
+      {
+        "id": "019f03c1-95ea-7cf3-bf75-f3c688a8f0cf",
+        "code": "TRN-2026-0001",
+        "title": "PMP Certification Training",
+        "status": "active",
+        "delivery_mode": "virtual",
+        "bucket": "direct_online",
+        "capacity": 20,
+        "enrolled_count": 4,
+        "start_date": "2026-09-15",
+        "end_date": "2026-09-18",
+        "timezone": "Asia/Kolkata",
+        "trainer_assigned": true,
+        "trainer_name": "Trainer User"
+      }
+    ],
+    "completed_trainings": [],
+    "recent_enrolments": [
+      {
+        "enrolment_id": "019f12ac-fe15-7592-8de6-3baeaa171b1b",
+        "status": "confirmed",
+        "enrolled_at": "2026-06-29T09:19:14.656Z",
+        "participant_name": "Priya Sharma",
+        "participant_email": "priya.sharma@example.com",
+        "training_code": "TRN-2026-0001",
+        "training_title": "PMP Certification Training"
+      }
+    ],
+    "recent_trainers": [
+      {
+        "id": "019f03c1-95ef-7992-82da-443ac54eca0d",
+        "name": "Trainer User",
+        "email": "trainer@invensis.test",
+        "is_active": true,
+        "created_at": "2026-06-26T11:47:26.319Z"
+      }
+    ]
+  }
+  ```
+- **`users`** — `by_role` always includes all four roles (`0` when none). `pending_setup` counts accounts with no password yet (setup email pending). `participants_total` is the count of `participants` rows (learners on rosters).
+- **`trainers`** — `assigned` counts trainers holding at least one **currently-active** assignment; `unassigned = total − assigned`. `total_certificates` sums each trainer's `certificates` array.
+- **`courses`** — one row per Training ID. `upcoming` = scheduled to start today or later and not `cancelled`/`completed`. `fill_rate = total_enrolled / total_capacity` rounded to 2 dp (`0` when no capacity).
+- **`certificates`** — there is **no dedicated certificate store yet**; `issued` is a proxy for completed enrolments. `trainer_certificates` mirrors `trainers.total_certificates`.
+- **`tickets`** — **static placeholder** (`supported: false`, all counts `0`). Support ticketing is not built yet; swap for live counts when the feature lands.
+- Preview lists (`upcoming_trainings` ≤ 8, `completed_trainings` ≤ 8, `recent_enrolments` ≤ 8, `recent_trainers` ≤ 5) are compact, ordered snapshots for dashboard widgets. Use §3.2.1 / §3.2.11 for full paginated lists.
 
 ### 3.2.1 `GET /api/admin/trainings`
 

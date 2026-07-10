@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   schedules,
@@ -9,10 +9,19 @@ import {
   participants,
   enrolments,
   users,
+  userProfiles,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
+import { presignGet } from "../../lib/storage.js";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+// Whole days from now until a `YYYY-MM-DD` date (negative once past). null if absent.
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const target = new Date(`${dateStr}T00:00:00Z`).getTime();
+  return Math.ceil((target - Date.now()) / MS_PER_DAY);
+}
 
 // days_left: days until the first upcoming session; 0 if ongoing, null if done/cancelled.
 function computeDaysLeft(status, sessions) {
@@ -192,4 +201,249 @@ export async function getTrainingDetail(userId, trainingRef) {
   }
 
   return response;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Learner dashboard — a single snapshot for the learner landing page:
+   profile summary, progress stats, a chronological learning journey, the
+   learner's enrolments grouped by lifecycle (in-progress / upcoming /
+   completed), certificates earned, and upcoming cohorts open to register
+   for (a nudge to enrol). Capability-based — scoped to the caller's own
+   enrolments, so no role gate is needed (mirrors listMyTrainings).
+   ───────────────────────────────────────────────────────── */
+
+// A learner is treated as having earned a certificate once their training is
+// finished — either the enrolment or the training itself is marked completed.
+function isFinished(r) {
+  return r.enrolmentStatus === "completed" || r.trainingStatus === "completed";
+}
+
+// Compact course card for the dashboard widgets, enriched with progress.
+function learnerCourseCard(r) {
+  const total = r.totalSessions ?? 0;
+  const done = r.completedSessions ?? 0;
+  const finished = isFinished(r);
+  const progressPct = finished ? 100 : total > 0 ? Math.round((done / total) * 100) : 0;
+  return {
+    id: r.trainingId,
+    code: r.code,
+    title: r.title,
+    delivery_mode: r.deliveryMode,
+    bucket: r.bucket,
+    status: r.trainingStatus,
+    enrolment_status: r.enrolmentStatus,
+    start_date: r.startDate,
+    end_date: r.endDate,
+    timezone: r.timezone,
+    duration_hours: r.durationHours,
+    enrolled_at: r.enrolledAt,
+    total_sessions: total,
+    completed_sessions: done,
+    progress_pct: progressPct,
+    days_until_start: r.trainingStatus === "ongoing" ? 0 : daysUntil(r.startDate),
+    meeting_released: r.meetingReleased,
+  };
+}
+
+export async function getDashboard(userId) {
+  // ── Who is this learner (profile summary) ──
+  const [user] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!user) throw new AppError("User not found", 404);
+
+  const [profile] = await db
+    .select({
+      avatarKey: userProfiles.avatarKey,
+      jobTitle: userProfiles.jobTitle,
+      companyName: userProfiles.companyName,
+      country: userProfiles.country,
+    })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+  const avatarUrl = profile?.avatarKey ? await presignGet(profile.avatarKey) : null;
+
+  // ── All the learner's live enrolments, with per-training session progress ──
+  const enrolRows = await db
+    .select({
+      enrolmentId: enrolments.id,
+      enrolmentStatus: enrolments.status,
+      enrolledAt: enrolments.enrolledAt,
+      enrolmentUpdatedAt: enrolments.updatedAt,
+      trainingId: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      deliveryMode: trainingIds.deliveryMode,
+      bucket: trainingIds.bucket,
+      trainingStatus: trainingIds.status,
+      meetingReleased: trainingIds.meetingReleased,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      timezone: schedules.timezone,
+      durationHours: schedules.durationHours,
+      totalSessions: sql`(
+        SELECT count(*)::int FROM training_sessions ts WHERE ts.training_id = ${trainingIds.id}
+      )`,
+      completedSessions: sql`(
+        SELECT count(*)::int FROM training_sessions ts
+        WHERE ts.training_id = ${trainingIds.id} AND ts.status = 'completed'
+      )`,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .where(
+      and(eq(participants.userId, userId), notInArray(enrolments.status, ["cancelled", "transferred"]))
+    )
+    .orderBy(desc(enrolments.enrolledAt));
+
+  // ── Bucket enrolments by lifecycle ──
+  const inProgress = [];
+  const upcoming = [];
+  const completed = [];
+  const certificates = [];
+  const journey = [];
+  let learningHours = 0;
+
+  for (const r of enrolRows) {
+    const finished = isFinished(r);
+    const card = learnerCourseCard(r);
+
+    journey.push({
+      type: "enrolled",
+      date: r.enrolledAt,
+      training_code: r.code,
+      title: r.title,
+    });
+
+    if (finished) {
+      completed.push(card);
+      const completedAt = r.enrolmentUpdatedAt ?? r.endDate ?? null;
+      if (r.durationHours) learningHours += r.durationHours;
+      certificates.push({
+        training_id: r.trainingId,
+        training_code: r.code,
+        title: r.title,
+        delivery_mode: r.deliveryMode,
+        duration_hours: r.durationHours,
+        completed_at: completedAt,
+      });
+      journey.push({
+        type: "completed",
+        date: completedAt,
+        training_code: r.code,
+        title: r.title,
+      });
+    } else if (r.trainingStatus === "ongoing") {
+      inProgress.push(card);
+    } else {
+      upcoming.push(card);
+    }
+  }
+
+  // Journey oldest → newest so the frontend can render a timeline top-down.
+  journey.sort((a, b) => new Date(a.date ?? 0) - new Date(b.date ?? 0));
+
+  const totalEnrolments = enrolRows.length;
+  const completionRate =
+    totalEnrolments > 0 ? Math.round((completed.length / totalEnrolments) * 100) / 100 : 0;
+
+  // ── Upcoming cohorts open to register for (marketing nudge) ──
+  // Active offerings starting today or later; annotated with seats remaining so
+  // the frontend can surface "filling fast" / "sold out" badges. Cohorts the
+  // learner is already enrolled in are filtered out below.
+  const enrolledTrainingIds = new Set(enrolRows.map((r) => r.trainingId));
+  const cohortRows = await db
+    .select({
+      id: schedules.id,
+      title: schedules.title,
+      bucket: schedules.bucket,
+      deliveryMode: schedules.deliveryMode,
+      batchType: schedules.batchType,
+      durationHours: schedules.durationHours,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      startTime: schedules.startTime,
+      endTime: schedules.endTime,
+      timezone: schedules.timezone,
+      scheduleCapacity: schedules.capacity,
+      trainingId: trainingIds.id,
+      trainingCapacity: trainingIds.capacity,
+      enrolledCount: trainingIds.enrolledCount,
+    })
+    .from(schedules)
+    .leftJoin(
+      trainingIds,
+      and(eq(trainingIds.scheduleId, schedules.id), sql`${trainingIds.status} <> 'cancelled'`)
+    )
+    .where(and(eq(schedules.isActive, true), sql`${schedules.startDate} >= current_date`))
+    .orderBy(asc(schedules.startDate))
+    .limit(20);
+
+  const upcomingCohorts = cohortRows
+    .filter((c) => !(c.trainingId && enrolledTrainingIds.has(c.trainingId)))
+    .slice(0, 8)
+    .map((c) => {
+      const capacity = c.trainingCapacity ?? c.scheduleCapacity ?? 0;
+      const enrolled = c.enrolledCount ?? 0;
+      const seatsLeft = Math.max(capacity - enrolled, 0);
+      return {
+        schedule_id: c.id,
+        title: c.title,
+        bucket: c.bucket,
+        delivery_mode: c.deliveryMode,
+        batch_type: c.batchType,
+        duration_hours: c.durationHours,
+        start_date: c.startDate,
+        end_date: c.endDate,
+        start_time: c.startTime,
+        end_time: c.endTime,
+        timezone: c.timezone,
+        capacity,
+        seats_left: seatsLeft,
+        starts_in_days: daysUntil(c.startDate),
+        filling_fast: capacity > 0 && seatsLeft > 0 && seatsLeft / capacity <= 0.25,
+        is_full: capacity > 0 && seatsLeft === 0,
+      };
+    });
+
+  return {
+    generated_at: new Date().toISOString(),
+    learner: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatar_url: avatarUrl,
+      job_title: profile?.jobTitle ?? null,
+      company_name: profile?.companyName ?? null,
+      country: profile?.country ?? null,
+      member_since: user.createdAt,
+    },
+    stats: {
+      total_enrolments: totalEnrolments,
+      in_progress: inProgress.length,
+      upcoming: upcoming.length,
+      completed: completed.length,
+      certificates_earned: certificates.length,
+      learning_hours: learningHours,
+      completion_rate: completionRate, // completed / total, 0–1
+    },
+    my_courses: {
+      in_progress: inProgress,
+      upcoming,
+      completed,
+    },
+    certificates,
+    journey,
+    upcoming_cohorts: upcomingCohorts,
+  };
 }

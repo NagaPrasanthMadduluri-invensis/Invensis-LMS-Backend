@@ -1,5 +1,9 @@
 import * as learnerService from "./learner.service.js";
 
+export async function getDashboard(req, res) {
+  res.json(await learnerService.getDashboard(req.user.user_id));
+}
+
 export async function listMyTrainings(req, res) {
   res.json(await learnerService.listMyTrainings(req.user.user_id));
 }

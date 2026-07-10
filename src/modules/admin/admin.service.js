@@ -763,6 +763,289 @@ export async function cancelEnrolment(adminId, enrolmentId, reason, ip) {
   });
 }
 
+/* ─────────────────────────────────────────────────────────
+   Admin dashboard — a single overview snapshot for the landing page.
+   Aggregates users, trainers, courses (Training IDs), enrolments,
+   certificates and (placeholder) support tickets, plus a few preview
+   lists (upcoming / completed trainings, recent enrolments & trainers).
+   ───────────────────────────────────────────────────────── */
+
+// Maps a joined training row to the compact card shape used by the preview
+// lists (mirrors the shape of GET /api/admin/trainings).
+function dashboardTrainingCard(r) {
+  return {
+    id: r.id,
+    code: r.code,
+    title: r.title,
+    status: r.status,
+    delivery_mode: r.deliveryMode,
+    bucket: r.bucket,
+    capacity: r.capacity,
+    enrolled_count: r.enrolledCount,
+    start_date: r.startDate,
+    end_date: r.endDate,
+    timezone: r.timezone,
+    trainer_assigned: r.trainerName != null,
+    trainer_name: r.trainerName ?? null,
+  };
+}
+
+export async function getDashboard() {
+  // Base select + joins shared by both training preview lists.
+  const trainingCardSelect = {
+    id: trainingIds.id,
+    code: trainingIds.code,
+    title: trainingIds.title,
+    status: trainingIds.status,
+    deliveryMode: trainingIds.deliveryMode,
+    bucket: trainingIds.bucket,
+    capacity: trainingIds.capacity,
+    enrolledCount: trainingIds.enrolledCount,
+    startDate: schedules.startDate,
+    endDate: schedules.endDate,
+    timezone: schedules.timezone,
+    trainerName: users.name,
+  };
+  const trainingCardFrom = (qb) =>
+    qb
+      .from(trainingIds)
+      .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+      .leftJoin(
+        trainerAssignments,
+        and(eq(trainerAssignments.trainingId, trainingIds.id), isNull(trainerAssignments.removedAt))
+      )
+      .leftJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
+      .leftJoin(users, eq(trainers.userId, users.id));
+
+  const [
+    userRows,
+    [trainerAgg],
+    [{ assignedTrainers }],
+    [{ participantsTotal }],
+    statusRows,
+    [courseAgg],
+    [{ upcomingCourses }],
+    enrolRows,
+    upcomingRows,
+    completedRows,
+    recentEnrolments,
+    recentTrainers,
+  ] = await Promise.all([
+    // Users grouped by role, with active / pending-setup breakdown.
+    db
+      .select({
+        role: users.role,
+        total: sql`count(*)::int`,
+        active: sql`count(*) filter (where ${users.isActive})::int`,
+        pendingSetup: sql`count(*) filter (where ${users.passwordHash} is null)::int`,
+      })
+      .from(users)
+      .groupBy(users.role),
+
+    // Trainer profile aggregates (certificates are a jsonb array on each row).
+    db
+      .select({
+        total: sql`count(*)::int`,
+        active: sql`count(*) filter (where ${trainers.isActive})::int`,
+        totalCertificates: sql`coalesce(sum(jsonb_array_length(${trainers.certificates})), 0)::int`,
+      })
+      .from(trainers),
+
+    // Trainers holding at least one currently-active assignment.
+    db
+      .select({ assignedTrainers: sql`count(distinct ${trainerAssignments.trainerId})::int` })
+      .from(trainerAssignments)
+      .where(isNull(trainerAssignments.removedAt)),
+
+    db.select({ participantsTotal: sql`count(*)::int` }).from(participants),
+
+    // Trainings (courses) grouped by lifecycle status.
+    db
+      .select({ status: trainingIds.status, count: sql`count(*)::int` })
+      .from(trainingIds)
+      .groupBy(trainingIds.status),
+
+    // Course totals: seats offered vs filled, meeting links released.
+    db
+      .select({
+        total: sql`count(*)::int`,
+        totalCapacity: sql`coalesce(sum(${trainingIds.capacity}), 0)::int`,
+        totalEnrolled: sql`coalesce(sum(${trainingIds.enrolledCount}), 0)::int`,
+        meetingReleased: sql`count(*) filter (where ${trainingIds.meetingReleased})::int`,
+      })
+      .from(trainingIds),
+
+    // Upcoming = scheduled to start today or later and not cancelled/completed.
+    db
+      .select({ upcomingCourses: sql`count(*)::int` })
+      .from(trainingIds)
+      .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+      .where(
+        and(
+          sql`${schedules.startDate} >= current_date`,
+          sql`${trainingIds.status} not in ('cancelled', 'completed')`
+        )
+      ),
+
+    // Enrolments grouped by status (confirmed / completed / cancelled / …).
+    db
+      .select({ status: enrolments.status, count: sql`count(*)::int` })
+      .from(enrolments)
+      .groupBy(enrolments.status),
+
+    // Preview: next trainings to start.
+    trainingCardFrom(db.select(trainingCardSelect))
+      .where(
+        and(
+          sql`${schedules.startDate} >= current_date`,
+          sql`${trainingIds.status} not in ('cancelled', 'completed')`
+        )
+      )
+      .orderBy(asc(schedules.startDate))
+      .limit(8),
+
+    // Preview: most recently completed trainings.
+    trainingCardFrom(db.select(trainingCardSelect))
+      .where(eq(trainingIds.status, "completed"))
+      .orderBy(desc(trainingIds.updatedAt))
+      .limit(8),
+
+    // Preview: latest enrolments across all trainings.
+    db
+      .select({
+        enrolmentId: enrolments.id,
+        status: enrolments.status,
+        enrolledAt: enrolments.enrolledAt,
+        participantName: participants.name,
+        participantEmail: participants.email,
+        trainingCode: trainingIds.code,
+        trainingTitle: trainingIds.title,
+      })
+      .from(enrolments)
+      .innerJoin(participants, eq(enrolments.participantId, participants.id))
+      .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+      .orderBy(desc(enrolments.enrolledAt))
+      .limit(8),
+
+    // Preview: most recently onboarded trainers.
+    db
+      .select({
+        id: trainers.id,
+        name: users.name,
+        email: users.email,
+        isActive: trainers.isActive,
+        createdAt: trainers.createdAt,
+      })
+      .from(trainers)
+      .innerJoin(users, eq(trainers.userId, users.id))
+      .orderBy(desc(trainers.createdAt))
+      .limit(5),
+  ]);
+
+  // ── Fold the grouped rows into flat maps ──
+  const roleTemplate = { admin: 0, trainer: 0, sponsor: 0, learner: 0 };
+  const byRole = { ...roleTemplate };
+  let usersTotal = 0;
+  let usersActive = 0;
+  let pendingSetup = 0;
+  for (const r of userRows) {
+    byRole[r.role] = r.total;
+    usersTotal += r.total;
+    usersActive += r.active;
+    pendingSetup += r.pendingSetup;
+  }
+
+  const statusTemplate = { pending: 0, active: 0, ongoing: 0, completed: 0, cancelled: 0 };
+  const coursesByStatus = { ...statusTemplate };
+  for (const r of statusRows) coursesByStatus[r.status] = r.count;
+
+  const enrolTemplate = { confirmed: 0, cancelled: 0, transferred: 0, completed: 0, failed: 0 };
+  const enrolByStatus = { ...enrolTemplate };
+  let enrolTotal = 0;
+  for (const r of enrolRows) {
+    enrolByStatus[r.status] = r.count;
+    enrolTotal += r.count;
+  }
+
+  const totalCapacity = courseAgg.totalCapacity;
+  const totalEnrolled = courseAgg.totalEnrolled;
+
+  return {
+    generated_at: new Date().toISOString(),
+    users: {
+      total: usersTotal,
+      active: usersActive,
+      inactive: usersTotal - usersActive,
+      pending_setup: pendingSetup, // accounts with no password yet (setup email pending)
+      by_role: byRole,
+      participants_total: participantsTotal,
+    },
+    trainers: {
+      total: trainerAgg.total,
+      active: trainerAgg.active,
+      inactive: trainerAgg.total - trainerAgg.active,
+      assigned: assignedTrainers, // currently hold at least one active assignment
+      unassigned: trainerAgg.total - assignedTrainers,
+      total_certificates: trainerAgg.totalCertificates,
+    },
+    courses: {
+      total: courseAgg.total,
+      by_status: coursesByStatus,
+      upcoming: upcomingCourses,
+      ongoing: coursesByStatus.ongoing,
+      completed: coursesByStatus.completed,
+      meeting_released: courseAgg.meetingReleased,
+      total_capacity: totalCapacity,
+      total_enrolled: totalEnrolled,
+      fill_rate: totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) / 100 : 0,
+    },
+    enrolments: {
+      total: enrolTotal,
+      confirmed: enrolByStatus.confirmed,
+      completed: enrolByStatus.completed,
+      cancelled: enrolByStatus.cancelled,
+      transferred: enrolByStatus.transferred,
+      failed: enrolByStatus.failed,
+    },
+    certificates: {
+      // No dedicated certificate store yet — a learner who completes a training
+      // is treated as having earned one, so completed enrolments are the proxy.
+      issued: enrolByStatus.completed,
+      trainer_certificates: trainerAgg.totalCertificates,
+      note: "Derived from completed enrolments; a dedicated certificate store is not yet implemented.",
+    },
+    tickets: {
+      // Support ticketing is not built yet — static placeholder so the dashboard
+      // card can render. Replace with live counts once the feature lands.
+      supported: false,
+      total: 0,
+      open: 0,
+      in_progress: 0,
+      resolved: 0,
+      closed: 0,
+      note: "Support ticketing is not yet available; showing placeholder values.",
+    },
+    upcoming_trainings: upcomingRows.map(dashboardTrainingCard),
+    completed_trainings: completedRows.map(dashboardTrainingCard),
+    recent_enrolments: recentEnrolments.map((e) => ({
+      enrolment_id: e.enrolmentId,
+      status: e.status,
+      enrolled_at: e.enrolledAt,
+      participant_name: e.participantName,
+      participant_email: e.participantEmail,
+      training_code: e.trainingCode,
+      training_title: e.trainingTitle,
+    })),
+    recent_trainers: recentTrainers.map((t) => ({
+      id: t.id,
+      name: t.name,
+      email: t.email,
+      is_active: t.isActive,
+      created_at: t.createdAt,
+    })),
+  };
+}
+
 // Transfer a participant to another training (reason required, audited). Marks
 // the source enrolment 'transferred' and creates a new confirmed enrolment in
 // the target, preserving the sponsoring order link.

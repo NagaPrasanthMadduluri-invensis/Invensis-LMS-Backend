@@ -10,6 +10,10 @@ import {
 } from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
 
+export async function getDashboard(req, res) {
+  res.json(await adminService.getDashboard());
+}
+
 export async function listTrainings(req, res) {
   const result = await adminService.listTrainings();
   res.json(result);

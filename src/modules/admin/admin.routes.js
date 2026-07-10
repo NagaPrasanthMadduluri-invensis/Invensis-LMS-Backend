@@ -7,6 +7,13 @@ import { asyncHandler } from "../../lib/async-handler.js";
 const router = Router();
 
 router.get(
+  "/dashboard",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getDashboard)
+);
+
+router.get(
   "/trainings",
   verifyToken,
   requireRole("admin"),
