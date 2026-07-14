@@ -23,6 +23,7 @@ export const batchTypeEnum = pgEnum("batch_type", ["weekday", "weekend", "combin
 export const trainingStatusEnum = pgEnum("training_status", ["pending", "active", "ongoing", "completed", "cancelled"]);
 export const sessionStatusEnum = pgEnum("session_status", ["scheduled", "ongoing", "completed", "cancelled"]);
 export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "cancelled", "transferred", "completed", "failed"]);
+export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "present", "partial", "absent"]);
 export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
 
 /* ── users ─────────────────────────────────────────────── */
@@ -210,6 +211,17 @@ export const participants = pgTable("participants", {
   email: text("email").notNull().unique(),
   phone: text("phone"),
   jobTitle: text("job_title"),
+  // Learner location, sourced from the xCRM customer.billing block. Present for
+  // every order regardless of delivery format (a live_virtual learner still has
+  // a billing city/country) — this is what geo analytics keys off, not the venue.
+  city: text("city"),
+  country: text("country"),
+  // Learner profile attributes — mirror the fields a learner fills in their
+  // profile (user_profiles) / that arrive on the xCRM customer. Drive the
+  // learner-demographic analytics. (job_title already above.)
+  company: text("company"),
+  department: text("department"),
+  experienceYears: integer("experience_years"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -238,6 +250,18 @@ export const enrolments = pgTable(
     participantId: uuid("participant_id").notNull().references(() => participants.id),
     orderId: uuid("order_id").references(() => orders.id), // null for manually-added enrolments
     status: enrolmentStatusEnum("status").notNull().default("confirmed"),
+    // Overall attendance outcome, set once a training completes. 'not_marked'
+    // until then. Drives the admin attendance analytics.
+    attendanceStatus: attendanceStatusEnum("attendance_status").notNull().default("not_marked"),
+    // Revenue attributes, sourced from the xCRM order + package. Amount is the
+    // per-seat paid amount (order.paid_amount / quantity); tier is package.name.
+    amount: numeric("amount"),
+    currency: text("currency"),
+    pricingTier: text("pricing_tier"),
+    // Who paid — 'self' (individual / self-sponsored) vs 'corporate' (a company
+    // sponsor). Mirrors the xCRM order.purchase_type. Powers the self-vs-corporate
+    // analytics split.
+    sponsorship: text("sponsorship"),
     repeatEligible: boolean("repeat_eligible").notNull().default(false),
     repeatApproved: boolean("repeat_approved").notNull().default(false),
     enrolledAt: timestamp("enrolled_at", { withTimezone: true }).notNull().defaultNow(),

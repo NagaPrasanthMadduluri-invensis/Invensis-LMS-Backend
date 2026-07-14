@@ -66,6 +66,41 @@ export const cancelEnrolmentSchema = z.object({
   reason: z.string().trim().min(1, "A reason is required"),
 });
 
+// Analytics dashboard filters. Every field is optional — an omitted field means
+// "no constraint on this dimension". Empty strings from the query string are
+// coerced to undefined so the frontend can send blank params harmlessly.
+const blankToUndef = (v) => (v === "" || v == null ? undefined : v);
+const dateStr = z.preprocess(
+  blankToUndef,
+  z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD").optional()
+);
+
+export const analyticsQuerySchema = z.object({
+  from: dateStr,
+  to: dateStr,
+  delivery_mode: z.preprocess(
+    blankToUndef,
+    z.enum(["virtual", "in_person", "hybrid", "one_to_one"]).optional()
+  ),
+  bucket: z.preprocess(
+    blankToUndef,
+    z.enum(["direct_online", "corporate", "one_to_one_coaching"]).optional()
+  ),
+  status: z.preprocess(
+    blankToUndef,
+    z.enum(["pending", "active", "ongoing", "completed", "cancelled"]).optional()
+  ),
+  trainer_id: z.preprocess(blankToUndef, z.string().uuid().optional()),
+  // Location = a venue city, or the literal "Virtual / Online" for online trainings.
+  location: z.preprocess(blankToUndef, z.string().trim().min(1).optional()),
+  // Daily session length in whole hours (2 / 4 / 6 / 8 …).
+  duration: z.preprocess(blankToUndef, z.coerce.number().int().positive().max(24).optional()),
+  // Learner-profile filters (enrolment grain).
+  sponsorship: z.preprocess(blankToUndef, z.enum(["self", "corporate"]).optional()),
+  job_title: z.preprocess(blankToUndef, z.string().trim().min(1).optional()),
+  department: z.preprocess(blankToUndef, z.string().trim().min(1).optional()),
+});
+
 export const transferEnrolmentSchema = z.object({
   training_id: z.string().trim().min(1, "Target training_id (UUID or code) is required"),
   reason: z.string().trim().min(1, "A reason is required"),

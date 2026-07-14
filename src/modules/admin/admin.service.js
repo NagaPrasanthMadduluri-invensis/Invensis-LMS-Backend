@@ -1033,8 +1033,83 @@ export async function getDashboard() {
   const totalCapacity = courseAgg.totalCapacity;
   const totalEnrolled = courseAgg.totalEnrolled;
 
+  // ── Action items: what the admin needs to act on right now ──
+  const [awaitingRes, releasableRes, underfilledRes, pendingSetupRes] = await Promise.all([
+    // Live trainings with no trainer assigned.
+    db.execute(sql`
+      select ti.id, ti.code, ti.title, s.start_date
+      from training_ids ti
+      left join schedules s on s.id = ti.schedule_id
+      where ti.status not in ('cancelled', 'completed')
+        and not exists (
+          select 1 from trainer_assignments ta
+          where ta.training_id = ti.id and ta.removed_at is null)
+      order by s.start_date asc nulls last
+    `),
+    // Meeting link ready to release: starting within 14 days, min seats met, not yet released.
+    db.execute(sql`
+      select ti.id, ti.code, ti.title, ti.enrolled_count, ti.min_seats, s.start_date
+      from training_ids ti
+      join schedules s on s.id = ti.schedule_id
+      where ti.status not in ('cancelled', 'completed')
+        and ti.meeting_released = false
+        and ti.enrolled_count >= ti.min_seats
+        and s.start_date >= current_date
+        and s.start_date <= current_date + interval '14 days'
+      order by s.start_date asc
+    `),
+    // Under-enrolled and starting soon (below min seats within 21 days) — at risk.
+    db.execute(sql`
+      select ti.id, ti.code, ti.title, ti.enrolled_count, ti.min_seats, ti.capacity, s.start_date
+      from training_ids ti
+      join schedules s on s.id = ti.schedule_id
+      where ti.status not in ('cancelled', 'completed')
+        and ti.enrolled_count < ti.min_seats
+        and s.start_date >= current_date
+        and s.start_date <= current_date + interval '21 days'
+      order by s.start_date asc
+    `),
+    // Learner accounts awaiting activation (no password set yet).
+    db.execute(sql`
+      select p.id, p.name, p.email, p.created_at
+      from participants p
+      left join users u on u.id = p.user_id
+      where p.user_id is null or u.password_hash is null
+      order by p.created_at desc
+      limit 6
+    `),
+  ]);
+
+  const actionItems = {
+    awaiting_trainer: {
+      count: awaitingRes.rows.length,
+      items: awaitingRes.rows.slice(0, 5).map((r) => ({
+        id: r.id, code: r.code, title: r.title, start_date: r.start_date,
+      })),
+    },
+    release_meeting: {
+      count: releasableRes.rows.length,
+      items: releasableRes.rows.slice(0, 5).map((r) => ({
+        id: r.id, code: r.code, title: r.title, start_date: r.start_date,
+        enrolled_count: r.enrolled_count, min_seats: r.min_seats,
+      })),
+    },
+    under_enrolled: {
+      count: underfilledRes.rows.length,
+      items: underfilledRes.rows.slice(0, 5).map((r) => ({
+        id: r.id, code: r.code, title: r.title, start_date: r.start_date,
+        enrolled_count: r.enrolled_count, min_seats: r.min_seats, capacity: r.capacity,
+      })),
+    },
+    pending_setup: {
+      count: pendingSetup,
+      items: pendingSetupRes.rows.map((r) => ({ id: r.id, name: r.name, email: r.email })),
+    },
+  };
+
   return {
     generated_at: new Date().toISOString(),
+    action_items: actionItems,
     users: {
       total: usersTotal,
       active: usersActive,
@@ -1177,4 +1252,591 @@ export async function transferEnrolment(adminId, enrolmentId, targetRef, reason,
       status: "transferred",
     };
   });
+}
+
+/* ─────────────────────────────────────────────────────────
+   Admin analytics — a rich, FILTERABLE snapshot powering the
+   dynamic charts on the admin dashboard. Every dataset honours the
+   same filter set:
+     from / to        → date range (applied per-dataset to its own
+                          natural date column: schedule start for
+                          trainings, enrolled_at for enrolments,
+                          created_at for participants, session start
+                          for sessions).
+     delivery_mode    → training delivery mode
+     bucket           → training bucket (offering type)
+     status           → training lifecycle status
+     trainer_id       → only trainings currently assigned to that trainer
+   Categorical filters resolve against the training a record belongs to.
+   ───────────────────────────────────────────────────────── */
+export async function getAnalytics(filters = {}) {
+  const f = filters;
+
+  // Categorical training filter as a reusable WHERE fragment, parameterised by
+  // the alias the training row is exposed under in each query. Enum columns are
+  // cast to text so bound string params compare cleanly.
+  const trainingConds = (alias) => {
+    const a = sql.raw(alias);
+    const c = [sql`true`];
+    if (f.status) c.push(sql`${a}.status::text = ${f.status}`);
+    if (f.delivery_mode) c.push(sql`${a}.delivery_mode::text = ${f.delivery_mode}`);
+    if (f.bucket) c.push(sql`${a}.bucket::text = ${f.bucket}`);
+    if (f.trainer_id)
+      c.push(sql`exists (
+        select 1 from trainer_assignments ta
+        where ta.training_id = ${a}.id
+          and ta.trainer_id = ${f.trainer_id}
+          and ta.removed_at is null)`);
+    if (f.duration)
+      c.push(sql`exists (
+        select 1 from schedules s
+        where s.id = ${a}.schedule_id
+          and round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int = ${f.duration})`);
+    return sql.join(c, sql` and `);
+  };
+
+  // Date-range fragment against a column expression (cast: 'date' | 'timestamptz').
+  const dateConds = (colExpr, cast) => {
+    const c = [sql`true`];
+    if (f.from) c.push(sql`${colExpr} >= ${f.from}::${sql.raw(cast)}`);
+    if (f.to) c.push(sql`${colExpr} <= ${f.to}::${sql.raw(cast)}`);
+    return sql.join(c, sql` and `);
+  };
+
+  const trainerScope = [sql`true`];
+  if (f.trainer_id) trainerScope.push(sql`tr.id = ${f.trainer_id}`);
+  const trainerScopeSql = sql.join(trainerScope, sql` and `);
+
+  // Learner-attribute filters (location, sponsorship, job title, department) live
+  // on the enrolment/participant, not the training — so they scope enrolment-grain
+  // datasets via the participants join (alias p / enrolments alias e), never the
+  // training-level ones.
+  const enrolFilters = [sql`true`];
+  if (f.location) enrolFilters.push(sql`p.country = ${f.location}`);
+  if (f.sponsorship) enrolFilters.push(sql`e.sponsorship = ${f.sponsorship}`);
+  if (f.job_title) enrolFilters.push(sql`p.job_title = ${f.job_title}`);
+  if (f.department) enrolFilters.push(sql`p.department = ${f.department}`);
+  const enrolCond = sql.join(enrolFilters, sql` and `);
+
+  // Revenue counts only money that actually landed — confirmed/completed seats.
+  const paidRevenue = sql`coalesce(sum(e.amount) filter (where e.status in ('confirmed', 'completed')), 0)::float`;
+
+  const [
+    trainingsRes,
+    enrolSummaryRes,
+    enrolMonthlyRes,
+    participantMonthlyRes,
+    trainerSummaryRes,
+    topTrainersRes,
+    sessionSummaryRes,
+    sessionMonthlyRes,
+    trainerOptionsRes,
+    courseDemandRes,
+    attendanceRes,
+    durationRes,
+    locationRes,
+    tierRes,
+    revenueByCourseRes,
+    locationOptionsRes,
+    durationOptionsRes,
+    sponsorshipRes,
+    jobTitleRes,
+    departmentRes,
+    experienceRes,
+    companiesRes,
+    jobTitleOptionsRes,
+    departmentOptionsRes,
+  ] = await Promise.all([
+    // Trainings (with schedule + active trainer) — drives most training charts,
+    // capacity, the upcoming list and the training KPIs.
+    db.execute(sql`
+      select ti.id, ti.code, ti.title, ti.status::text as status,
+             ti.delivery_mode::text as delivery_mode, ti.bucket::text as bucket,
+             ti.capacity, ti.enrolled_count,
+             s.start_date, s.end_date, s.timezone,
+             u.name as trainer_name
+      from training_ids ti
+      left join schedules s on s.id = ti.schedule_id
+      left join trainer_assignments ta on ta.training_id = ti.id and ta.removed_at is null
+      left join trainers tr on tr.id = ta.trainer_id
+      left join users u on u.id = tr.user_id
+      where ${trainingConds("ti")} and ${dateConds(sql`s.start_date`, "date")}
+      order by s.start_date asc nulls last
+    `),
+
+    // Enrolment totals + status split + distinct participants + revenue.
+    db.execute(sql`
+      select
+        count(*)::int as total,
+        count(*) filter (where e.status = 'confirmed')::int   as confirmed,
+        count(*) filter (where e.status = 'completed')::int   as completed,
+        count(*) filter (where e.status = 'cancelled')::int   as cancelled,
+        count(*) filter (where e.status = 'transferred')::int as transferred,
+        count(*) filter (where e.status = 'failed')::int      as failed,
+        count(distinct e.participant_id)::int as participants,
+        ${paidRevenue} as revenue
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+    `),
+
+    // Enrolments + revenue per month (time series).
+    db.execute(sql`
+      select to_char(date_trunc('month', e.enrolled_at), 'YYYY-MM') as month,
+        count(*)::int as total,
+        count(*) filter (where e.status = 'confirmed')::int   as confirmed,
+        count(*) filter (where e.status = 'completed')::int   as completed,
+        count(*) filter (where e.status = 'cancelled')::int   as cancelled,
+        count(*) filter (where e.status = 'transferred')::int as transferred,
+        count(*) filter (where e.status = 'failed')::int      as failed,
+        ${paidRevenue} as revenue
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by 1
+    `),
+
+    // New participant accounts per month (date-filtered by created_at only —
+    // participants are not directly bound to a single training).
+    db.execute(sql`
+      select to_char(date_trunc('month', p.created_at), 'YYYY-MM') as month,
+             count(*)::int as new_count
+      from participants p
+      where ${dateConds(sql`p.created_at`, "timestamptz")}
+      group by 1 order by 1
+    `),
+
+    // Trainer totals (respects trainer_id filter).
+    db.execute(sql`
+      select
+        count(*)::int as total,
+        count(*) filter (where tr.is_active)::int as active,
+        count(*) filter (where exists (
+          select 1 from trainer_assignments ta
+          where ta.trainer_id = tr.id and ta.removed_at is null))::int as assigned
+      from trainers tr
+      where ${trainerScopeSql}
+    `),
+
+    // Top trainers by load (trainings assigned + participants trained).
+    db.execute(sql`
+      select tr.id, u.name, tr.is_active,
+        count(distinct ti.id)::int as trainings,
+        coalesce(sum(ti.enrolled_count), 0)::int as participants
+      from trainers tr
+      join users u on u.id = tr.user_id
+      left join trainer_assignments ta on ta.trainer_id = tr.id and ta.removed_at is null
+      left join training_ids ti on ti.id = ta.training_id and ${trainingConds("ti")}
+      where ${trainerScopeSql}
+      group by tr.id, u.name, tr.is_active
+      order by trainings desc, participants desc
+      limit 8
+    `),
+
+    // Session totals + status split.
+    db.execute(sql`
+      select count(*)::int as total,
+        count(*) filter (where ts.status = 'scheduled')::int as scheduled,
+        count(*) filter (where ts.status = 'ongoing')::int   as ongoing,
+        count(*) filter (where ts.status = 'completed')::int as completed,
+        count(*) filter (where ts.status = 'cancelled')::int as cancelled
+      from training_sessions ts
+      join training_ids ti on ti.id = ts.training_id
+      where ${trainingConds("ti")} and ${dateConds(sql`ts.start_time`, "timestamptz")}
+    `),
+
+    // Sessions per month (time series).
+    db.execute(sql`
+      select to_char(date_trunc('month', ts.start_time), 'YYYY-MM') as month,
+        count(*)::int as total,
+        count(*) filter (where ts.status = 'completed')::int as completed,
+        count(*) filter (where ts.status = 'scheduled')::int as scheduled
+      from training_sessions ts
+      join training_ids ti on ti.id = ts.training_id
+      where ${trainingConds("ti")} and ${dateConds(sql`ts.start_time`, "timestamptz")}
+      group by 1 order by 1
+    `),
+
+    // Active trainers for the filter dropdown.
+    db.execute(sql`
+      select tr.id, u.name from trainers tr
+      join users u on u.id = tr.user_id
+      where tr.is_active = true order by u.name
+    `),
+
+    // Course demand — which courses attract the most enrolment requests (+ revenue).
+    db.execute(sql`
+      select ti.title,
+        count(*)::int as requests,
+        count(distinct ti.id)::int as trainings,
+        ${paidRevenue} as revenue
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by ti.title
+      order by requests desc
+      limit 8
+    `),
+
+    // Attendance — only meaningful for completed trainings.
+    db.execute(sql`
+      select
+        count(*) filter (where e.attendance_status <> 'not_marked')::int as marked,
+        count(*) filter (where e.attendance_status = 'present')::int as present,
+        count(*) filter (where e.attendance_status = 'partial')::int as partial,
+        count(*) filter (where e.attendance_status = 'absent')::int as absent
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ti.status = 'completed' and ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+    `),
+
+    // Enrolments grouped by daily session length (hours/day).
+    db.execute(sql`
+      select round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int as hours,
+        count(distinct ti.id)::int as trainings,
+        count(e.id)::int as enrolments
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join schedules s on s.id = ti.schedule_id
+      join participants p on p.id = e.participant_id
+      where e.status not in ('cancelled', 'transferred')
+        and ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by 1
+    `),
+
+    // Enrolments + revenue grouped by LEARNER location (billing country).
+    db.execute(sql`
+      select coalesce(p.country, 'Unknown') as location,
+        count(*)::int as enrolments,
+        count(distinct ti.id)::int as trainings,
+        ${paidRevenue} as revenue
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where e.status not in ('cancelled', 'transferred')
+        and ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by enrolments desc
+    `),
+
+    // Enrolments + revenue grouped by pricing tier (xCRM package).
+    db.execute(sql`
+      select coalesce(e.pricing_tier, 'Unspecified') as tier,
+        count(*)::int as enrolments,
+        ${paidRevenue} as revenue
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by enrolments desc
+    `),
+
+    // Top courses by revenue.
+    db.execute(sql`
+      select ti.title, ${paidRevenue} as revenue, count(*)::int as requests
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by ti.title
+      order by revenue desc
+      limit 8
+    `),
+
+    // Filter dropdown options (filter-independent).
+    db.execute(sql`
+      select distinct country as location from participants
+      where country is not null order by 1
+    `),
+    db.execute(sql`
+      select distinct round(extract(epoch from (end_time - start_time)) / 3600)::int as hours
+      from schedules order by 1
+    `),
+
+    // ── Learner-profile analytics (enrolment grain) ──
+    // Self-sponsored vs corporate.
+    db.execute(sql`
+      select coalesce(e.sponsorship, 'unspecified') as sponsorship, count(*)::int as enrolments
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by 2 desc
+    `),
+
+    // By job title.
+    db.execute(sql`
+      select coalesce(p.job_title, 'Unspecified') as job_title, count(*)::int as enrolments
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by 2 desc limit 8
+    `),
+
+    // By department.
+    db.execute(sql`
+      select coalesce(p.department, 'Unspecified') as department, count(*)::int as enrolments
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by 2 desc limit 8
+    `),
+
+    // By experience bracket.
+    db.execute(sql`
+      select
+        case
+          when p.experience_years is null then 'Unknown'
+          when p.experience_years <= 2 then '0-2 yrs'
+          when p.experience_years <= 5 then '3-5 yrs'
+          when p.experience_years <= 10 then '6-10 yrs'
+          else '11+ yrs'
+        end as bracket,
+        min(p.experience_years) as sort,
+        count(*)::int as enrolments
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by sort nulls last
+    `),
+
+    // Top companies (which corporate accounts send the most learners).
+    db.execute(sql`
+      select coalesce(p.company, 'Unspecified') as company, count(*)::int as enrolments
+      from enrolments e
+      join training_ids ti on ti.id = e.training_id
+      join participants p on p.id = e.participant_id
+      where ${trainingConds("ti")} and ${enrolCond} and ${dateConds(sql`e.enrolled_at`, "timestamptz")}
+      group by 1 order by 2 desc limit 8
+    `),
+
+    // Filter option lists.
+    db.execute(sql`select distinct job_title as v from participants where job_title is not null order by 1`),
+    db.execute(sql`select distinct department as v from participants where department is not null order by 1`),
+  ]);
+
+  // ── Fold the trainings rows into the training-centric datasets ──
+  const trainings = trainingsRes.rows;
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const statusTpl = { pending: 0, active: 0, ongoing: 0, completed: 0, cancelled: 0 };
+  const byStatus = { ...statusTpl };
+  const byMode = {};
+  const byBucket = {};
+  const capByBucket = {};
+  const trainingsMonthly = {};
+  let totalCapacity = 0;
+  let totalEnrolled = 0;
+  let upcomingCount = 0;
+  const upcomingList = [];
+
+  for (const t of trainings) {
+    if (t.status in byStatus) byStatus[t.status] += 1;
+    else byStatus[t.status] = 1;
+    byMode[t.delivery_mode] = (byMode[t.delivery_mode] ?? 0) + 1;
+    byBucket[t.bucket] = (byBucket[t.bucket] ?? 0) + 1;
+    totalCapacity += t.capacity ?? 0;
+    totalEnrolled += t.enrolled_count ?? 0;
+
+    const cb = capByBucket[t.bucket] ?? (capByBucket[t.bucket] = { capacity: 0, enrolled: 0 });
+    cb.capacity += t.capacity ?? 0;
+    cb.enrolled += t.enrolled_count ?? 0;
+
+    if (t.start_date) {
+      const m = String(t.start_date).slice(0, 7);
+      trainingsMonthly[m] = (trainingsMonthly[m] ?? 0) + 1;
+    }
+
+    const startStr = t.start_date ? String(t.start_date).slice(0, 10) : null;
+    const upcoming = startStr && startStr >= todayStr && !["cancelled", "completed"].includes(t.status);
+    if (upcoming) {
+      upcomingCount += 1;
+      if (upcomingList.length < 8) {
+        upcomingList.push({
+          id: t.id,
+          code: t.code,
+          title: t.title,
+          status: t.status,
+          delivery_mode: t.delivery_mode,
+          bucket: t.bucket,
+          capacity: t.capacity,
+          enrolled_count: t.enrolled_count,
+          start_date: t.start_date,
+          end_date: t.end_date,
+          timezone: t.timezone,
+          trainer_assigned: t.trainer_name != null,
+          trainer_name: t.trainer_name ?? null,
+        });
+      }
+    }
+  }
+
+  const es = enrolSummaryRes.rows[0] ?? {};
+  const enrolTotal = es.total ?? 0;
+  const enrolCompleted = es.completed ?? 0;
+  const ss = sessionSummaryRes.rows[0] ?? {};
+  const ts0 = trainerSummaryRes.rows[0] ?? {};
+
+  const att = attendanceRes.rows[0] ?? {};
+  const attMarked = att.marked ?? 0;
+  const attAttended = (att.present ?? 0) + (att.partial ?? 0);
+  const attendanceRate = attMarked > 0 ? Math.round((attAttended / attMarked) * 100) / 100 : 0;
+
+  // Cumulative participant growth.
+  let running = 0;
+  const participantGrowth = participantMonthlyRes.rows.map((r) => {
+    running += r.new_count;
+    return { month: r.month, new: r.new_count, cumulative: running };
+  });
+
+  return {
+    generated_at: new Date().toISOString(),
+    filters: {
+      from: f.from ?? null,
+      to: f.to ?? null,
+      delivery_mode: f.delivery_mode ?? null,
+      bucket: f.bucket ?? null,
+      status: f.status ?? null,
+      trainer_id: f.trainer_id ?? null,
+    },
+    summary: {
+      trainings_total: trainings.length,
+      trainings_upcoming: upcomingCount,
+      trainings_ongoing: byStatus.ongoing ?? 0,
+      trainings_completed: byStatus.completed ?? 0,
+      participants_total: es.participants ?? 0,
+      enrolments_total: enrolTotal,
+      enrolments_completed: enrolCompleted,
+      completion_rate: enrolTotal > 0 ? Math.round((enrolCompleted / enrolTotal) * 100) / 100 : 0,
+      total_capacity: totalCapacity,
+      total_enrolled: totalEnrolled,
+      fill_rate: totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) / 100 : 0,
+      trainers_total: ts0.total ?? 0,
+      trainers_active: ts0.active ?? 0,
+      trainers_assigned: ts0.assigned ?? 0,
+      sessions_total: ss.total ?? 0,
+      attendance_rate: attendanceRate, // attended (present+partial) / marked, completed trainings
+      attendance_marked: attMarked,
+      revenue_total: Math.round(es.revenue ?? 0), // paid (confirmed+completed) seats
+      currency: "USD",
+    },
+    enrolments_over_time: enrolMonthlyRes.rows.map((r) => ({
+      month: r.month,
+      total: r.total,
+      confirmed: r.confirmed,
+      completed: r.completed,
+      cancelled: r.cancelled,
+      transferred: r.transferred,
+      failed: r.failed,
+    })),
+    revenue_over_time: enrolMonthlyRes.rows.map((r) => ({
+      month: r.month,
+      revenue: Math.round(r.revenue ?? 0),
+    })),
+    participant_growth: participantGrowth,
+    trainings_over_time: Object.keys(trainingsMonthly)
+      .sort()
+      .map((month) => ({ month, count: trainingsMonthly[month] })),
+    sessions_over_time: sessionMonthlyRes.rows.map((r) => ({
+      month: r.month,
+      total: r.total,
+      completed: r.completed,
+      scheduled: r.scheduled,
+    })),
+    trainings_by_status: Object.keys(statusTpl).map((status) => ({ status, count: byStatus[status] ?? 0 })),
+    trainings_by_delivery_mode: Object.entries(byMode).map(([mode, count]) => ({ mode, count })),
+    trainings_by_bucket: Object.entries(byBucket).map(([bucket, count]) => ({ bucket, count })),
+    enrolments_by_status: [
+      { status: "confirmed", count: es.confirmed ?? 0 },
+      { status: "completed", count: es.completed ?? 0 },
+      { status: "transferred", count: es.transferred ?? 0 },
+      { status: "cancelled", count: es.cancelled ?? 0 },
+      { status: "failed", count: es.failed ?? 0 },
+    ],
+    sessions_by_status: [
+      { status: "scheduled", count: ss.scheduled ?? 0 },
+      { status: "ongoing", count: ss.ongoing ?? 0 },
+      { status: "completed", count: ss.completed ?? 0 },
+      { status: "cancelled", count: ss.cancelled ?? 0 },
+    ],
+    capacity_by_bucket: Object.entries(capByBucket).map(([bucket, v]) => ({
+      bucket,
+      capacity: v.capacity,
+      enrolled: v.enrolled,
+    })),
+    top_trainers: topTrainersRes.rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      is_active: r.is_active,
+      trainings: r.trainings,
+      participants: r.participants,
+    })),
+    course_demand: courseDemandRes.rows.map((r) => ({
+      title: r.title,
+      requests: r.requests,
+      trainings: r.trainings,
+      revenue: Math.round(r.revenue ?? 0),
+    })),
+    revenue_by_course: revenueByCourseRes.rows.map((r) => ({
+      title: r.title,
+      revenue: Math.round(r.revenue ?? 0),
+      requests: r.requests,
+    })),
+    enrolments_by_tier: tierRes.rows.map((r) => ({
+      tier: r.tier,
+      enrolments: r.enrolments,
+      revenue: Math.round(r.revenue ?? 0),
+    })),
+    attendance: {
+      marked: attMarked,
+      present: att.present ?? 0,
+      partial: att.partial ?? 0,
+      absent: att.absent ?? 0,
+      attendance_rate: attendanceRate,
+    },
+    enrolments_by_duration: durationRes.rows.map((r) => ({
+      hours: r.hours,
+      label: `${r.hours} hrs/day`,
+      trainings: r.trainings,
+      enrolments: r.enrolments,
+    })),
+    enrolments_by_location: locationRes.rows.map((r) => ({
+      location: r.location,
+      trainings: r.trainings,
+      enrolments: r.enrolments,
+      revenue: Math.round(r.revenue ?? 0),
+    })),
+    enrolments_by_sponsorship: sponsorshipRes.rows.map((r) => ({
+      sponsorship: r.sponsorship,
+      enrolments: r.enrolments,
+    })),
+    enrolments_by_job_title: jobTitleRes.rows.map((r) => ({
+      job_title: r.job_title,
+      enrolments: r.enrolments,
+    })),
+    enrolments_by_department: departmentRes.rows.map((r) => ({
+      department: r.department,
+      enrolments: r.enrolments,
+    })),
+    enrolments_by_experience: experienceRes.rows.map((r) => ({
+      bracket: r.bracket,
+      enrolments: r.enrolments,
+    })),
+    top_companies: companiesRes.rows.map((r) => ({
+      company: r.company,
+      enrolments: r.enrolments,
+    })),
+    upcoming_trainings: upcomingList,
+    trainer_options: trainerOptionsRes.rows.map((r) => ({ id: r.id, name: r.name })),
+    location_options: locationOptionsRes.rows.map((r) => r.location),
+    duration_options: durationOptionsRes.rows.map((r) => r.hours),
+    job_title_options: jobTitleOptionsRes.rows.map((r) => r.v),
+    department_options: departmentOptionsRes.rows.map((r) => r.v),
+  };
 }

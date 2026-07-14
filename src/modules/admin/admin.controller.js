@@ -7,11 +7,17 @@ import {
   listParticipantsQuerySchema,
   cancelEnrolmentSchema,
   transferEnrolmentSchema,
+  analyticsQuerySchema,
 } from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
 
 export async function getDashboard(req, res) {
   res.json(await adminService.getDashboard());
+}
+
+export async function getAnalytics(req, res) {
+  const filters = analyticsQuerySchema.parse(req.query);
+  res.json(await adminService.getAnalytics(filters));
 }
 
 export async function listTrainings(req, res) {

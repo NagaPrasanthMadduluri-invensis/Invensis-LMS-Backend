@@ -14,6 +14,13 @@ router.get(
 );
 
 router.get(
+  "/analytics",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getAnalytics)
+);
+
+router.get(
   "/trainings",
   verifyToken,
   requireRole("admin"),
