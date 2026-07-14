@@ -12,6 +12,7 @@
     "db:push": "drizzle-kit push",
     "db:seed": "node src/db/seed.js",
     "db:seed:training": "node src/db/seed-training.js",
+    "db:seed:sponsor": "node src/db/seed-sponsor.js",
     "db:seed:analytics": "node src/db/seed-analytics.js",
     "db:dedupe-emails": "node src/db/dedupe-emails.js"
   },
