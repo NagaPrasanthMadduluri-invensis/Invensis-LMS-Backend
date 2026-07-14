@@ -1042,6 +1042,77 @@ Get a short-lived **presigned PUT URL** so the browser can upload a profile phot
 
 ---
 
+## 3.6 Sponsor portal — `/api/sponsor`
+
+A **sponsor** is the buyer of ≥1 order (§1.5). These endpoints are **capability-based** — any authenticated user may call them, and everything is scoped to the caller's own sponsored orders (`orders.sponsor_user_id`). A user who has sponsored nothing gets zeros / empty lists.
+
+> **Pricing note:** invoice `amount` / `currency_code`, `outstanding_amount`, and `receipt_url` are **`null`/`0` for now** — the CRM order payload doesn't yet carry pricing and no receipt PDFs are generated. The queries already read from `enrolments.amount`/`currency`, so these light up automatically once pricing is populated. Only `paid` orders are ingested, so nothing is outstanding.
+
+### 3.6.1 `GET /api/sponsor/dashboard`
+
+Summary counts for the sponsor landing page.
+
+- **Auth:** Bearer access token (no role gate)
+- **`200` response:**
+  ```json
+  { "learners_count": 3, "active_count": 3, "invoices_count": 2, "outstanding_amount": 0, "currency_code": null }
+  ```
+  - `learners_count` — distinct learners sponsored (excludes transferred).
+  - `active_count` — distinct sponsored learners with a `confirmed` enrolment in an `active`/`ongoing` training.
+  - `invoices_count` — number of the sponsor's orders.
+- **Errors:** `401` no/invalid token
+
+### 3.6.2 `GET /api/sponsor/learners`
+
+The learners this sponsor paid for (one row per enrolment; excludes `transferred`).
+
+- **Auth:** Bearer access token (no role gate)
+- **`200` response:**
+  ```json
+  {
+    "learners": [
+      {
+        "id": "019f6071-c142-733d-850c-c92d4da41f8a",
+        "name": "Ravi Kumar",
+        "email": "ravi.kumar@example.com",
+        "training_code": "TRN-2026-0016",
+        "training_title": "PMP Certification Training",
+        "status": "confirmed",
+        "enrolled_at": "2026-07-14T11:44:55.601Z"
+      }
+    ]
+  }
+  ```
+  `id` is the **enrolment id** (unique per learner-per-training row). Ordered by most recently enrolled.
+- **Errors:** `401` no/invalid token
+
+### 3.6.3 `GET /api/sponsor/invoices`
+
+One invoice per order the sponsor placed, newest first.
+
+- **Auth:** Bearer access token (no role gate)
+- **`200` response:**
+  ```json
+  {
+    "invoices": [
+      {
+        "id": "019f6071-c14d-7488-8587-321f4135e994",
+        "order_number": "ORD-SPONSOR-SEED-2",
+        "course_name": "AWS Solutions Architect",
+        "amount": null,
+        "currency_code": null,
+        "status": "paid",
+        "issued_at": "2026-07-14T11:44:55.625Z",
+        "receipt_url": null
+      }
+    ]
+  }
+  ```
+  `status` is the order's `payment_status`. See the pricing note above for `amount`/`currency_code`/`receipt_url`.
+- **Errors:** `401` no/invalid token
+
+---
+
 ## 4. Frontend integration
 
 ### 4.1 Recommended flow
