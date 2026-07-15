@@ -59,11 +59,36 @@ export async function listMyTrainings(userId) {
       startDate: schedules.startDate,
       endDate: schedules.endDate,
       timezone: schedules.timezone,
+      // Who paid — 'self' vs 'corporate'; the buyer's email is resolved below.
+      sponsorship: enrolments.sponsorship,
+      // Certificate is one-to-one with the enrolment (unique enrolment_id), so a
+      // left join can't fan out the row. Present == survey submitted / issued.
+      certificateId: certificates.certificateCode,
+      certificateIssuedAt: certificates.issuedAt,
+      // Currently-assigned trainer for the training (most recent active
+      // assignment). Correlated subquery to avoid multiplying enrolment rows.
+      trainerName: sql`(
+        SELECT u.name FROM trainer_assignments ta
+        JOIN trainers t ON t.id = ta.trainer_id
+        JOIN users u ON u.id = t.user_id
+        WHERE ta.training_id = ${trainingIds.id} AND ta.removed_at IS NULL
+        ORDER BY ta.assigned_at DESC
+        LIMIT 1
+      )`,
+      // Sponsor (buyer) email — only when a distinct user paid for this seat
+      // (excludes self-sponsored, where the buyer is the learner themselves).
+      sponsorEmail: sql`(
+        SELECT su.email FROM orders o
+        JOIN users su ON su.id = o.sponsor_user_id
+        WHERE o.id = ${enrolments.orderId} AND su.id <> ${userId}
+        LIMIT 1
+      )`,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
     .where(
       and(
         eq(participants.userId, userId),
@@ -85,6 +110,12 @@ export async function listMyTrainings(userId) {
       enrolment_status: r.enrolmentStatus,
       meeting_released: r.meetingReleased,
       enrolled_at: r.enrolledAt,
+      trainer_name: r.trainerName ?? null,
+      sponsorship: r.sponsorship ?? null,
+      sponsor_email: r.sponsorEmail ?? null,
+      certificate_id: r.certificateId ?? null,
+      certificate_issued: !!r.certificateId,
+      certificate_issued_at: r.certificateIssuedAt ?? null,
     })),
   };
 }

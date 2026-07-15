@@ -848,6 +848,9 @@ function dashboardTrainingCard(r) {
     start_date: r.startDate,
     end_date: r.endDate,
     timezone: r.timezone,
+    duration_hours: r.durationHours ?? null,
+    daily_hours: r.dailyHours ?? null,
+    location: r.location ?? null,
     trainer_assigned: r.trainerName != null,
     trainer_name: r.trainerName ?? null,
   };
@@ -867,6 +870,9 @@ export async function getDashboard() {
     startDate: schedules.startDate,
     endDate: schedules.endDate,
     timezone: schedules.timezone,
+    durationHours: schedules.durationHours,
+    dailyHours: sql`round(extract(epoch from (${schedules.endTime} - ${schedules.startTime})) / 3600)::int`,
+    location: sql`coalesce(${schedules.venue}->>'city', case when ${trainingIds.deliveryMode} is not null then 'Virtual / Online' end)`,
     trainerName: users.name,
   };
   const trainingCardFrom = (qb) =>
@@ -973,7 +979,8 @@ export async function getDashboard() {
       .orderBy(desc(trainingIds.updatedAt))
       .limit(8),
 
-    // Preview: latest enrolments across all trainings.
+    // Preview: latest enrolments across all trainings (enriched for the
+    // dashboard table — schedule date, delivery mode, total & daily hours).
     db
       .select({
         enrolmentId: enrolments.id,
@@ -983,26 +990,40 @@ export async function getDashboard() {
         participantEmail: participants.email,
         trainingCode: trainingIds.code,
         trainingTitle: trainingIds.title,
+        deliveryMode: trainingIds.deliveryMode,
+        startDate: schedules.startDate,
+        endDate: schedules.endDate,
+        durationHours: schedules.durationHours,
+        dailyHours: sql`round(extract(epoch from (${schedules.endTime} - ${schedules.startTime})) / 3600)::int`,
+        location: sql`coalesce(${participants.city}, ${participants.country})`,
       })
       .from(enrolments)
       .innerJoin(participants, eq(enrolments.participantId, participants.id))
       .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+      .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
       .orderBy(desc(enrolments.enrolledAt))
-      .limit(8),
+      .limit(10),
 
-    // Preview: most recently onboarded trainers.
-    db
-      .select({
-        id: trainers.id,
-        name: users.name,
-        email: users.email,
-        isActive: trainers.isActive,
-        createdAt: trainers.createdAt,
-      })
-      .from(trainers)
-      .innerJoin(users, eq(trainers.userId, users.id))
-      .orderBy(desc(trainers.createdAt))
-      .limit(5),
+    // Preview: most recently onboarded trainers, enriched with their latest
+    // assigned training (learners, location, mode, hours, dates) for the table.
+    db.execute(sql`
+      select tr.id, u.name, tr.is_active, tr.created_at,
+        ti.delivery_mode, ti.enrolled_count as learners,
+        s.start_date, s.end_date, s.duration_hours,
+        round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int as daily_hours,
+        coalesce(s.venue->>'city', case when ti.delivery_mode is not null then 'Virtual / Online' end) as location
+      from trainers tr
+      join users u on u.id = tr.user_id
+      left join lateral (
+        select ta.training_id from trainer_assignments ta
+        where ta.trainer_id = tr.id and ta.removed_at is null
+        order by ta.assigned_at desc limit 1
+      ) la on true
+      left join training_ids ti on ti.id = la.training_id
+      left join schedules s on s.id = ti.schedule_id
+      order by tr.created_at desc
+      limit 6
+    `),
   ]);
 
   // ── Fold the grouped rows into flat maps ──
@@ -1173,13 +1194,25 @@ export async function getDashboard() {
       participant_email: e.participantEmail,
       training_code: e.trainingCode,
       training_title: e.trainingTitle,
+      delivery_mode: e.deliveryMode,
+      start_date: e.startDate,
+      end_date: e.endDate,
+      duration_hours: e.durationHours,
+      daily_hours: e.dailyHours,
+      location: e.location,
     })),
-    recent_trainers: recentTrainers.map((t) => ({
+    recent_trainers: recentTrainers.rows.map((t) => ({
       id: t.id,
       name: t.name,
-      email: t.email,
-      is_active: t.isActive,
-      created_at: t.createdAt,
+      is_active: t.is_active,
+      created_at: t.created_at,
+      learners: t.learners,
+      location: t.location,
+      delivery_mode: t.delivery_mode,
+      duration_hours: t.duration_hours,
+      daily_hours: t.daily_hours,
+      start_date: t.start_date,
+      end_date: t.end_date,
     })),
   };
 }
