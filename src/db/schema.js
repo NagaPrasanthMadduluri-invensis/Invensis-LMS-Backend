@@ -188,6 +188,14 @@ export const trainers = pgTable("trainers", {
   experience: text("experience"),
   rate: numeric("rate"),
   certificates: jsonb("certificates").notNull().default(sql`'[]'::jsonb`),
+  // Subject excellence — what the trainer is qualified to deliver (e.g. ["PMP",
+  // "PRINCE2"]). Distinct from `certificates` (their own professional certs).
+  specializations: jsonb("specializations").notNull().default(sql`'[]'::jsonb`),
+  // Base location. is_remote flags trainers who deliver online only; city/country
+  // may still be set for a remote trainer (where they're based).
+  city: text("city"),
+  country: text("country"),
+  isRemote: boolean("is_remote").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -11,6 +11,7 @@ import trainerRoutes from "./modules/trainer/trainer.routes.js";
 import ordersRoutes from "./modules/orders/orders.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import sponsorRoutes from "./modules/sponsor/sponsor.routes.js";
+import reportsRoutes from "./modules/reports/reports.routes.js";
 import { notFound, errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -37,6 +38,7 @@ app.use("/api/trainer", trainerRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/me", profileRoutes);
 app.use("/api/sponsor", sponsorRoutes);
+app.use("/api/reports", reportsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

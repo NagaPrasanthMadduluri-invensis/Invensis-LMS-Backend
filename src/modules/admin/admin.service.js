@@ -105,8 +105,12 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
     if (hasMeeting) {
       const releasing = body.meeting_released === true && !training.meetingReleased;
 
+      // Override may be requested in this same request, or already stored.
+      const overrideEnabled =
+        body.min_seats_override === true || training.minSeatsOverride;
+
       // Min-seat gate on release (unless overridden).
-      if (body.meeting_released === true && !training.minSeatsOverride) {
+      if (body.meeting_released === true && !overrideEnabled) {
         const [{ count }] = await tx
           .select({ count: sql`count(*)::int` })
           .from(enrolments)
@@ -136,6 +140,7 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
           meetingUrl: after.meeting_url,
           meetingPlatform: after.meeting_platform,
           meetingReleased: after.meeting_released,
+          minSeatsOverride: overrideEnabled,
           meetingTriggeredBy: adminId,
           meetingTriggeredAt: new Date(),
           updatedAt: new Date(),
@@ -278,6 +283,8 @@ export async function getTrainingDetail(trainingRef) {
       email: participants.email,
       phone: participants.phone,
       jobTitle: participants.jobTitle,
+      city: participants.city,
+      country: participants.country,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
@@ -337,6 +344,9 @@ export async function getTrainingDetail(trainingRef) {
       email: e.email,
       phone: e.phone,
       job_title: e.jobTitle,
+      city: e.city,
+      country: e.country,
+      location: [e.city, e.country].filter(Boolean).join(", ") || null,
       status: e.status,
       enrolled_at: e.enrolledAt,
       added_manually: e.orderId == null,
@@ -352,8 +362,10 @@ export async function getTrainingDetail(trainingRef) {
   };
 }
 
-/* ── Active trainers for the assignment picker ── */
-export async function listTrainers() {
+/* ── Trainers list. By default only active ones (for the assignment picker);
+   pass includeInactive for the admin management table so deactivated trainers
+   stay editable/reactivatable. ── */
+export async function listTrainers({ includeInactive = false } = {}) {
   const rows = await db
     .select({
       id: trainers.id,
@@ -361,13 +373,36 @@ export async function listTrainers() {
       email: users.email,
       bio: trainers.bio,
       experience: trainers.experience,
+      rate: trainers.rate,
+      certificates: trainers.certificates,
+      specializations: trainers.specializations,
+      city: trainers.city,
+      country: trainers.country,
+      isRemote: trainers.isRemote,
+      isActive: trainers.isActive,
     })
     .from(trainers)
     .innerJoin(users, eq(trainers.userId, users.id))
-    .where(eq(trainers.isActive, true))
+    .where(includeInactive ? undefined : eq(trainers.isActive, true))
     .orderBy(users.name);
 
-  return { trainers: rows };
+  return {
+    trainers: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      bio: r.bio,
+      experience: r.experience,
+      rate: r.rate,
+      certificates: r.certificates ?? [],
+      specializations: r.specializations ?? [],
+      city: r.city ?? null,
+      country: r.country ?? null,
+      is_remote: r.isRemote ?? false,
+      location: formatTrainerLocation({ city: r.city, country: r.country, isRemote: r.isRemote }),
+      is_active: r.isActive,
+    })),
+  };
 }
 
 /* ── Manually add a participant + confirmed enrolment to a training ── */
@@ -472,6 +507,14 @@ export async function addParticipant(adminId, trainingRef, body, ip) {
    Trainer management
    ───────────────────────────────────────────────────────── */
 
+// Human-readable location: "City, Country", with a "Remote" marker for online
+// trainers. Returns null when nothing is set.
+function formatTrainerLocation({ city, country, isRemote }) {
+  const place = [city, country].filter(Boolean).join(", ");
+  if (isRemote) return place ? `${place} · Remote` : "Remote";
+  return place || null;
+}
+
 function publicTrainer(t, u) {
   return {
     id: t.id,
@@ -482,6 +525,11 @@ function publicTrainer(t, u) {
     experience: t.experience,
     rate: t.rate,
     certificates: t.certificates,
+    specializations: t.specializations ?? [],
+    city: t.city ?? null,
+    country: t.country ?? null,
+    is_remote: t.isRemote ?? false,
+    location: formatTrainerLocation({ city: t.city, country: t.country, isRemote: t.isRemote }),
     is_active: t.isActive,
   };
 }
@@ -520,6 +568,10 @@ export async function onboardTrainer(adminId, body, ip) {
         experience: body.experience ?? null,
         rate: body.rate != null ? String(body.rate) : null,
         certificates: body.certificates ?? [],
+        specializations: body.specializations ?? [],
+        city: body.city ?? null,
+        country: body.country ?? null,
+        isRemote: body.is_remote ?? false,
       })
       .returning();
 
@@ -584,6 +636,10 @@ export async function updateTrainer(adminId, trainerId, body, ip) {
       experience: trainer.experience,
       rate: trainer.rate,
       certificates: trainer.certificates,
+      specializations: trainer.specializations,
+      city: trainer.city,
+      country: trainer.country,
+      is_remote: trainer.isRemote,
       is_active: trainer.isActive,
     };
 
@@ -592,14 +648,27 @@ export async function updateTrainer(adminId, trainerId, body, ip) {
     if (body.experience !== undefined) set.experience = body.experience;
     if (body.rate !== undefined) set.rate = body.rate != null ? String(body.rate) : null;
     if (body.certificates !== undefined) set.certificates = body.certificates;
+    if (body.specializations !== undefined) set.specializations = body.specializations;
+    if (body.city !== undefined) set.city = body.city;
+    if (body.country !== undefined) set.country = body.country;
+    if (body.is_remote !== undefined) set.isRemote = body.is_remote;
     if (body.is_active !== undefined) set.isActive = body.is_active;
     await tx.update(trainers).set(set).where(eq(trainers.id, trainerId));
 
-    if (body.name !== undefined) {
-      await tx
-        .update(users)
-        .set({ name: body.name, updatedAt: new Date() })
-        .where(eq(users.id, trainer.userId));
+    // Name / email live on the users account. Email is the login identity, so
+    // guard against colliding with another account.
+    const userSet = {};
+    if (body.name !== undefined) userSet.name = body.name;
+    if (body.email !== undefined) {
+      const [current] = await tx.select({ email: users.email }).from(users).where(eq(users.id, trainer.userId)).limit(1);
+      if (body.email !== current?.email) {
+        const [dupe] = await tx.select({ id: users.id }).from(users).where(eq(users.email, body.email)).limit(1);
+        if (dupe && dupe.id !== trainer.userId) throw new AppError("That email is already in use by another account", 409);
+        userSet.email = body.email;
+      }
+    }
+    if (Object.keys(userSet).length) {
+      await tx.update(users).set({ ...userSet, updatedAt: new Date() }).where(eq(users.id, trainer.userId));
     }
 
     await writeAudit(tx, {
@@ -608,7 +677,7 @@ export async function updateTrainer(adminId, trainerId, body, ip) {
       action: "trainer_updated",
       actorId: adminId,
       before,
-      after: { ...set, name: body.name },
+      after: { ...set, ...userSet },
       ipAddress: ip,
     });
 
@@ -646,11 +715,21 @@ async function refreshEnrolledCount(tx, trainingId) {
 // List all participants for the admin dashboard, paginated + optional search
 // (by name or email). Enriched with confirmed-enrolment count and account
 // status (has_password = false means their setup email is still pending).
-export async function listParticipants({ search, page, limit }) {
+export async function listParticipants({ search, page, limit, location, job_title }) {
   const offset = (page - 1) * limit;
-  const where = search
-    ? or(ilike(participants.name, `%${search}%`), ilike(participants.email, `%${search}%`))
-    : undefined;
+
+  // "city, country" — skips NULL parts, empty → NULL. Mirrors the display join.
+  const locationExpr = sql`nullif(concat_ws(', ', ${participants.city}, ${participants.country}), '')`;
+
+  const conditions = [];
+  if (search) {
+    conditions.push(
+      or(ilike(participants.name, `%${search}%`), ilike(participants.email, `%${search}%`))
+    );
+  }
+  if (job_title) conditions.push(eq(participants.jobTitle, job_title));
+  if (location) conditions.push(eq(locationExpr, location));
+  const where = conditions.length ? and(...conditions) : undefined;
 
   const enrolmentCount = sql`(
     SELECT count(*)::int FROM enrolments e
@@ -664,6 +743,8 @@ export async function listParticipants({ search, page, limit }) {
       email: participants.email,
       phone: participants.phone,
       jobTitle: participants.jobTitle,
+      city: participants.city,
+      country: participants.country,
       createdAt: participants.createdAt,
       accountActive: users.isActive,
       hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
@@ -681,6 +762,19 @@ export async function listParticipants({ search, page, limit }) {
     .from(participants)
     .where(where);
 
+  // Distinct filter options across ALL participants (independent of the current
+  // search/filter/page) so the dropdowns stay complete.
+  const jobTitleRows = await db
+    .selectDistinct({ value: participants.jobTitle })
+    .from(participants)
+    .where(sql`${participants.jobTitle} is not null and ${participants.jobTitle} <> ''`)
+    .orderBy(asc(participants.jobTitle));
+  const locationRows = await db
+    .selectDistinct({ value: locationExpr })
+    .from(participants)
+    .where(sql`${locationExpr} is not null`)
+    .orderBy(asc(locationExpr));
+
   return {
     participants: rows.map((r) => ({
       id: r.id,
@@ -688,6 +782,9 @@ export async function listParticipants({ search, page, limit }) {
       email: r.email,
       phone: r.phone,
       job_title: r.jobTitle,
+      city: r.city,
+      country: r.country,
+      location: [r.city, r.country].filter(Boolean).join(", ") || null,
       enrolment_count: r.enrolmentCount,
       account_active: r.accountActive ?? false,
       has_password: r.hasPassword ?? false,
@@ -696,6 +793,10 @@ export async function listParticipants({ search, page, limit }) {
     total: count,
     page,
     limit,
+    filters: {
+      job_titles: jobTitleRows.map((r) => r.value).filter(Boolean),
+      locations: locationRows.map((r) => r.value).filter(Boolean),
+    },
   };
 }
 

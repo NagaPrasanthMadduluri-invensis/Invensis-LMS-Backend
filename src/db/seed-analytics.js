@@ -70,12 +70,12 @@ const COURSES = [
 ];
 
 const TRAINERS = [
-  { name: "Priya Nair", bio: "PMP & PRINCE2 lead trainer", experience: "12 years", certs: 3 },
-  { name: "Arjun Mehta", bio: "Agile & Scrum coach", experience: "9 years", certs: 2 },
-  { name: "Sarah Collins", bio: "Cloud & DevOps specialist", experience: "8 years", certs: 4 },
-  { name: "David Okafor", bio: "Lean Six Sigma master black belt", experience: "15 years", certs: 2 },
-  { name: "Meera Krishnan", bio: "Data & analytics instructor", experience: "7 years", certs: 1 },
-  { name: "Thomas Reed", bio: "Leadership & executive coach", experience: "11 years", certs: 0 },
+  { name: "Priya Nair", bio: "PMP & PRINCE2 lead trainer", experience: "12 years", certs: 3, specializations: ["PMP", "PRINCE2"], city: "Bengaluru", country: "India", isRemote: true },
+  { name: "Arjun Mehta", bio: "Agile & Scrum coach", experience: "9 years", certs: 2, specializations: ["Scrum (CSM)", "SAFe Agile", "Agile Coaching"], city: "Mumbai", country: "India", isRemote: true },
+  { name: "Sarah Collins", bio: "Cloud & DevOps specialist", experience: "8 years", certs: 4, specializations: ["AWS", "Azure", "DevOps"], city: "London", country: "United Kingdom", isRemote: true },
+  { name: "David Okafor", bio: "Lean Six Sigma master black belt", experience: "15 years", certs: 2, specializations: ["Six Sigma", "Business Analysis"], city: "Dubai", country: "UAE", isRemote: false },
+  { name: "Meera Krishnan", bio: "Data & analytics instructor", experience: "7 years", certs: 1, specializations: ["Business Analysis", "PMI-ACP"], city: null, country: null, isRemote: true },
+  { name: "Thomas Reed", bio: "Leadership & executive coach", experience: "11 years", certs: 0, specializations: ["Leadership & Management"], city: "New York", country: "USA", isRemote: false },
 ];
 
 const FIRST = ["Rahul", "Anita", "James", "Sofia", "Wei", "Fatima", "Carlos", "Nadia", "Liam", "Grace", "Omar", "Elena", "Kenji", "Aisha", "Noah", "Divya", "Lucas", "Mei", "Ibrahim", "Chloe"];
@@ -206,6 +206,10 @@ async function seed() {
           title: `Professional Certificate ${k + 1}`,
           issued_by: "Invensis Learning",
         })),
+        specializations: t.specializations ?? [],
+        city: t.city ?? null,
+        country: t.country ?? null,
+        isRemote: t.isRemote ?? false,
         isActive: i !== TRAINERS.length - 1 ? true : rand() > 0.5, // last one maybe inactive
       })
       .returning();

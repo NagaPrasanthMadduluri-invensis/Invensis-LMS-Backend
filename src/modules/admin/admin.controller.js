@@ -31,7 +31,8 @@ export async function getTrainingDetail(req, res) {
 }
 
 export async function listTrainers(req, res) {
-  const result = await adminService.listTrainers();
+  const includeInactive = req.query.include_inactive === "true" || req.query.include_inactive === "1";
+  const result = await adminService.listTrainers({ includeInactive });
   res.json(result);
 }
 

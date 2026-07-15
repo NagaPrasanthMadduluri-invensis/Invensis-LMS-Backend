@@ -6,6 +6,7 @@ export const updateTrainingSchema = z
     meeting_url: z.string().url().optional(),
     meeting_platform: z.enum(["zoom", "teams", "other"]).optional(),
     meeting_released: z.boolean().optional(),
+    min_seats_override: z.boolean().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "Provide trainer_id and/or meeting fields",
@@ -27,6 +28,14 @@ const certificateSchema = z
   })
   .passthrough();
 
+// Subject excellence — free-form tag list, chosen from a preset list on the UI
+// but not hard-restricted here so the list can grow without a schema change.
+const specializationsSchema = z.array(z.string().trim().min(1)).max(30);
+// Location fields. Nullable so the admin can clear them; blank strings coerce to
+// null so an emptied input clears the value rather than storing "".
+const blankToNull = (v) => (typeof v === "string" && v.trim() === "" ? null : v);
+const locationField = z.preprocess(blankToNull, z.string().trim().min(1).nullable().optional());
+
 export const onboardTrainerSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   email: z.string().trim().toLowerCase().email(),
@@ -35,15 +44,24 @@ export const onboardTrainerSchema = z.object({
   experience: z.string().trim().optional(),
   rate: z.number().nonnegative().optional(),
   certificates: z.array(certificateSchema).optional(),
+  specializations: specializationsSchema.optional(),
+  city: locationField,
+  country: locationField,
+  is_remote: z.boolean().optional(),
 });
 
 export const updateTrainerSchema = z
   .object({
     name: z.string().trim().min(1).optional(),
+    email: z.string().trim().toLowerCase().email().optional(),
     bio: z.string().trim().optional(),
     experience: z.string().trim().optional(),
-    rate: z.number().nonnegative().optional(),
+    rate: z.number().nonnegative().nullable().optional(),
     certificates: z.array(certificateSchema).optional(),
+    specializations: specializationsSchema.optional(),
+    city: locationField,
+    country: locationField,
+    is_remote: z.boolean().optional(),
     is_active: z.boolean().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
@@ -58,6 +76,8 @@ export const updateParticipantSchema = z
 
 export const listParticipantsQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),
+  location: z.string().trim().min(1).optional(),
+  job_title: z.string().trim().min(1).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
 });

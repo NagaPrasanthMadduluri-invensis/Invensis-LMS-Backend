@@ -71,6 +71,13 @@
       "when": 1784018288018,
       "tag": "0009_chemical_captain_flint",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784098512711,
+      "tag": "0010_striped_morph",
+      "breakpoints": true
     }
   ]
 }
