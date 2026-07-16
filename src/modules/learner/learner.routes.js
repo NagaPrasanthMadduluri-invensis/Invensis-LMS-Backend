@@ -66,4 +66,23 @@ router.post(
   asyncHandler(ctrl.submitSurveyResponse)
 );
 
+// Support tickets — raised and viewed by the learner (capability-based, no role gate).
+router.post(
+  "/tickets",
+  verifyToken,
+  asyncHandler(ticketCtrl.learnerCreate)
+);
+
+router.get(
+  "/tickets",
+  verifyToken,
+  asyncHandler(ticketCtrl.learnerList)
+);
+
+router.get(
+  "/tickets/:ticketId",
+  verifyToken,
+  asyncHandler(ticketCtrl.learnerGet)
+);
+
 export default router;

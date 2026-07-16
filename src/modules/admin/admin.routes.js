@@ -147,4 +147,26 @@ router.get(
   asyncHandler(ctrl.listSurveyResponses)
 );
 
+// Support tickets — admin triage.
+router.get(
+  "/tickets",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminList)
+);
+
+router.get(
+  "/tickets/:ticketId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminGet)
+);
+
+router.patch(
+  "/tickets/:ticketId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminUpdate)
+);
+
 export default router;
