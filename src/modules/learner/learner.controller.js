@@ -1,5 +1,5 @@
 import * as learnerService from "./learner.service.js";
-import { certificateSurveySchema } from "./learner.schema.js";
+import { certificateSurveySchema, submitSurveySchema } from "./learner.schema.js";
 
 export async function getDashboard(req, res) {
   res.json(await learnerService.getDashboard(req.user.user_id));
@@ -28,6 +28,21 @@ export async function submitCertificateSurvey(req, res) {
     req.user.user_id,
     req.params.trainingRef,
     responses
+  );
+  res.status(201).json(result);
+}
+
+export async function listSurveys(req, res) {
+  res.json(await learnerService.listSurveys(req.user.user_id));
+}
+
+export async function submitSurveyResponse(req, res) {
+  const { answers } = submitSurveySchema.parse(req.body);
+  const result = await learnerService.submitSurveyResponse(
+    req.user.user_id,
+    req.params.surveyId,
+    answers,
+    req.ip
   );
   res.status(201).json(result);
 }

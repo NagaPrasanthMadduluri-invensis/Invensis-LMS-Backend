@@ -25,15 +25,7 @@ export const sessionStatusEnum = pgEnum("session_status", ["scheduled", "ongoing
 export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "cancelled", "transferred", "completed", "failed"]);
 export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "present", "partial", "absent"]);
 export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
-export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
-export const ticketCategoryEnum = pgEnum("ticket_category", [
-  "reschedule_training",
-  "cancel_training",
-  "certificate_issue",
-  "training_missed",
-  "other",
-]);
-export const ticketPriorityEnum = pgEnum("ticket_priority", ["low", "medium", "high", "urgent"]);
+export const surveyTypeEnum = pgEnum("survey_type", ["pre_training", "post_training"]);
 
 /* ── users ─────────────────────────────────────────────── */
 export const users = pgTable("users", {
@@ -307,6 +299,40 @@ export const certificates = pgTable("certificates", {
   surveyResponses: jsonb("survey_responses").notNull(),
   issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ── surveys (pre/post-training feedback forms) ────────────
+   A questionnaire attached to a training. `questions` holds the ordered
+   question objects; participants answer via survey_responses. */
+export const surveys = pgTable(
+  "surveys",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    trainingId: uuid("training_id").notNull().references(() => trainingIds.id),
+    type: surveyTypeEnum("type").notNull(), // pre_training | post_training
+    title: text("title").notNull(),
+    questions: jsonb("questions").notNull(), // array of question objects
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    trainingIdx: index("idx_survey_training").on(t.trainingId),
+  })
+);
+
+/* ── survey_responses ──────────────────────────────────────
+   One row per participant per survey. `answers` maps question id → answer. */
+export const surveyResponses = pgTable(
+  "survey_responses",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    surveyId: uuid("survey_id").notNull().references(() => surveys.id),
+    participantId: uuid("participant_id").notNull().references(() => participants.id),
+    answers: jsonb("answers").notNull(), // question id → answer
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    oneResponsePerParticipant: uniqueIndex("uniq_survey_response").on(t.surveyId, t.participantId),
+  })
+);
 
 /* ── audit_log (append-only) ───────────────────────────────
    NOTE: the spec mandates INSERT-only at the PostgreSQL role level. That is a

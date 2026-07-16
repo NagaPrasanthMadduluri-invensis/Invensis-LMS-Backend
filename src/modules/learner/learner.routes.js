@@ -52,10 +52,18 @@ router.get(
   asyncHandler(ctrl.getCertificate)
 );
 
-// Support tickets — scoped to the caller's own participant profile
-// (capability-based, no role gate, like /dashboard and /trainings).
-router.get("/tickets", verifyToken, asyncHandler(ticketCtrl.learnerList));
-router.post("/tickets", verifyToken, asyncHandler(ticketCtrl.learnerCreate));
-router.get("/tickets/:ticketId", verifyToken, asyncHandler(ticketCtrl.learnerGet));
+// Surveys for the caller's enrolled trainings + submitting a response
+// (capability-based, no role gate — like /dashboard and /trainings).
+router.get(
+  "/surveys",
+  verifyToken,
+  asyncHandler(ctrl.listSurveys)
+);
+
+router.post(
+  "/surveys/:surveyId/responses",
+  verifyToken,
+  asyncHandler(ctrl.submitSurveyResponse)
+);
 
 export default router;

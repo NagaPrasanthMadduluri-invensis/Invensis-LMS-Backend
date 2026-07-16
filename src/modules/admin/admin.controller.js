@@ -8,8 +8,23 @@ import {
   cancelEnrolmentSchema,
   transferEnrolmentSchema,
   analyticsQuerySchema,
+  createSurveySchema,
 } from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
+
+export async function createSurvey(req, res) {
+  const body = createSurveySchema.parse(req.body);
+  const survey = await adminService.createSurvey(req.user.user_id, req.params.trainingId, body, req.ip);
+  res.status(201).json({ survey });
+}
+
+export async function listTrainingSurveys(req, res) {
+  res.json(await adminService.listTrainingSurveys(req.params.trainingId));
+}
+
+export async function listSurveyResponses(req, res) {
+  res.json(await adminService.listSurveyResponses(req.params.surveyId));
+}
 
 export async function getDashboard(req, res) {
   res.json(await adminService.getDashboard());

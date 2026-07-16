@@ -1,5 +1,5 @@
 {
-  "id": "d5b946e9-b574-48e7-9af7-35bc5ce85055",
+  "id": "7e8e3de9-7ad1-4bba-bf54-4dae613c7c8b",
   "prevId": "906584d0-b4d6-4e51-af6e-1a1bf03231e3",
   "version": "7",
   "dialect": "postgresql",
@@ -969,8 +969,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.tickets": {
-      "name": "tickets",
+    "public.survey_responses": {
+      "name": "survey_responses",
       "schema": "",
       "columns": {
         "id": {
@@ -980,9 +980,9 @@
           "notNull": true,
           "default": "uuidv7()"
         },
-        "code": {
-          "name": "code",
-          "type": "text",
+        "survey_id": {
+          "name": "survey_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -992,74 +992,14 @@
           "primaryKey": false,
           "notNull": true
         },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "category": {
-          "name": "category",
-          "type": "ticket_category",
-          "typeSchema": "public",
+        "answers": {
+          "name": "answers",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": true
         },
-        "training_id": {
-          "name": "training_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "subject": {
-          "name": "subject",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "ticket_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'open'"
-        },
-        "priority": {
-          "name": "priority",
-          "type": "ticket_priority",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'medium'"
-        },
-        "resolved_by": {
-          "name": "resolved_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "resolved_at": {
-          "name": "resolved_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
+        "submitted_at": {
+          "name": "submitted_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -1067,38 +1007,112 @@
         }
       },
       "indexes": {
-        "idx_ticket_participant": {
-          "name": "idx_ticket_participant",
+        "uniq_survey_response": {
+          "name": "uniq_survey_response",
           "columns": [
+            {
+              "expression": "survey_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "participant_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
+        }
+      },
+      "foreignKeys": {
+        "survey_responses_survey_id_surveys_id_fk": {
+          "name": "survey_responses_survey_id_surveys_id_fk",
+          "tableFrom": "survey_responses",
+          "tableTo": "surveys",
+          "columnsFrom": [
+            "survey_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
-        "idx_ticket_status_created": {
-          "name": "idx_ticket_status_created",
+        "survey_responses_participant_id_participants_id_fk": {
+          "name": "survey_responses_participant_id_participants_id_fk",
+          "tableFrom": "survey_responses",
+          "tableTo": "participants",
+          "columnsFrom": [
+            "participant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.surveys": {
+      "name": "surveys",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "training_id": {
+          "name": "training_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "survey_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "questions": {
+          "name": "questions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assigned_at": {
+          "name": "assigned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_survey_training": {
+          "name": "idx_survey_training",
           "columns": [
             {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
+              "expression": "training_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1111,35 +1125,9 @@
         }
       },
       "foreignKeys": {
-        "tickets_participant_id_participants_id_fk": {
-          "name": "tickets_participant_id_participants_id_fk",
-          "tableFrom": "tickets",
-          "tableTo": "participants",
-          "columnsFrom": [
-            "participant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "tickets_user_id_users_id_fk": {
-          "name": "tickets_user_id_users_id_fk",
-          "tableFrom": "tickets",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "tickets_training_id_training_ids_id_fk": {
-          "name": "tickets_training_id_training_ids_id_fk",
-          "tableFrom": "tickets",
+        "surveys_training_id_training_ids_id_fk": {
+          "name": "surveys_training_id_training_ids_id_fk",
+          "tableFrom": "surveys",
           "tableTo": "training_ids",
           "columnsFrom": [
             "training_id"
@@ -1149,31 +1137,10 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "tickets_resolved_by_users_id_fk": {
-          "name": "tickets_resolved_by_users_id_fk",
-          "tableFrom": "tickets",
-          "tableTo": "users",
-          "columnsFrom": [
-            "resolved_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "tickets_code_unique": {
-          "name": "tickets_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1977,35 +1944,12 @@
         "reset"
       ]
     },
-    "public.ticket_category": {
-      "name": "ticket_category",
+    "public.survey_type": {
+      "name": "survey_type",
       "schema": "public",
       "values": [
-        "reschedule_training",
-        "cancel_training",
-        "certificate_issue",
-        "training_missed",
-        "other"
-      ]
-    },
-    "public.ticket_priority": {
-      "name": "ticket_priority",
-      "schema": "public",
-      "values": [
-        "low",
-        "medium",
-        "high",
-        "urgent"
-      ]
-    },
-    "public.ticket_status": {
-      "name": "ticket_status",
-      "schema": "public",
-      "values": [
-        "open",
-        "in_progress",
-        "resolved",
-        "closed"
+        "pre_training",
+        "post_training"
       ]
     },
     "public.training_status": {

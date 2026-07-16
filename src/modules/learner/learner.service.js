@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   schedules,
@@ -10,10 +10,13 @@ import {
   participants,
   enrolments,
   certificates,
+  surveys,
+  surveyResponses,
   users,
   userProfiles,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
+import { writeAudit } from "../../lib/audit.js";
 import { presignGet } from "../../lib/storage.js";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -667,4 +670,107 @@ export async function issueCertificateWithSurvey(userId, trainingRef, responses)
       issuedAt: issued.issuedAt,
     }),
   };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Surveys — surveys attached to the caller's enrolled trainings, and
+   submitting responses. Capability-based (scoped to the caller's own
+   participant/enrolments), so no role gate.
+   ───────────────────────────────────────────────────────── */
+
+export async function listSurveys(userId) {
+  const parts = await db
+    .select({ id: participants.id })
+    .from(participants)
+    .where(eq(participants.userId, userId));
+  const participantIds = parts.map((p) => p.id);
+  if (participantIds.length === 0) return { surveys: [] };
+
+  const enrolled = await db
+    .selectDistinct({ trainingId: enrolments.trainingId })
+    .from(enrolments)
+    .where(
+      and(
+        inArray(enrolments.participantId, participantIds),
+        notInArray(enrolments.status, ["cancelled", "transferred"])
+      )
+    );
+  const trainingIdList = enrolled.map((e) => e.trainingId);
+  if (trainingIdList.length === 0) return { surveys: [] };
+
+  const rows = await db
+    .select({
+      id: surveys.id,
+      type: surveys.type,
+      title: surveys.title,
+      questions: surveys.questions,
+      assignedAt: surveys.assignedAt,
+      trainingCode: trainingIds.code,
+      trainingTitle: trainingIds.title,
+    })
+    .from(surveys)
+    .innerJoin(trainingIds, eq(surveys.trainingId, trainingIds.id))
+    .where(inArray(surveys.trainingId, trainingIdList))
+    .orderBy(desc(surveys.assignedAt));
+
+  const answered = await db
+    .select({ surveyId: surveyResponses.surveyId })
+    .from(surveyResponses)
+    .where(inArray(surveyResponses.participantId, participantIds));
+  const answeredSet = new Set(answered.map((a) => a.surveyId));
+
+  return {
+    surveys: rows.map((s) => ({
+      id: s.id,
+      type: s.type,
+      title: s.title,
+      questions: s.questions,
+      training_code: s.trainingCode,
+      training_title: s.trainingTitle,
+      assigned_at: s.assignedAt,
+      answered: answeredSet.has(s.id),
+    })),
+  };
+}
+
+export async function submitSurveyResponse(userId, surveyId, answers, ip) {
+  if (!UUID_RE.test(surveyId)) throw new AppError("Survey not found", 404);
+
+  return db.transaction(async (tx) => {
+    const [survey] = await tx.select().from(surveys).where(eq(surveys.id, surveyId)).limit(1);
+    if (!survey) throw new AppError("Survey not found", 404);
+
+    // Caller must be an active participant in this survey's training.
+    const [enrolled] = await tx
+      .select({ participantId: participants.id })
+      .from(enrolments)
+      .innerJoin(participants, eq(enrolments.participantId, participants.id))
+      .where(
+        and(
+          eq(enrolments.trainingId, survey.trainingId),
+          eq(participants.userId, userId),
+          notInArray(enrolments.status, ["cancelled", "transferred"])
+        )
+      )
+      .limit(1);
+    if (!enrolled) throw new AppError("You are not enrolled in this survey's training", 403);
+
+    const inserted = await tx
+      .insert(surveyResponses)
+      .values({ surveyId, participantId: enrolled.participantId, answers })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted.length === 0) throw new AppError("You have already submitted this survey", 409);
+
+    await writeAudit(tx, {
+      entityType: "survey_response",
+      entityId: inserted[0].id,
+      action: "survey_response_submitted",
+      actorId: userId,
+      after: { survey_id: surveyId, training_id: survey.trainingId },
+      ipAddress: ip,
+    });
+
+    return { id: inserted[0].id, survey_id: surveyId, submitted_at: inserted[0].submittedAt };
+  });
 }

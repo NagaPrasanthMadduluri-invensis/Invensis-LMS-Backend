@@ -1113,6 +1113,79 @@ One invoice per order the sponsor placed, newest first.
 
 ---
 
+## 3.7 Surveys
+
+Pre/post-training feedback forms. An **admin** authors a survey against a training; **learners** enrolled in that training answer it. Distinct from the certificate-feedback survey (§3.1.x). `questions` is a **flexible array of question objects** — the frontend owns their exact shape (e.g. `{ id, type, label, options?, required? }`); the backend stores them as-is. `answers` is a `{ questionId: answer }` map.
+
+### 3.7.1 `POST /api/admin/trainings/:trainingId/surveys`
+
+Create (assign) a survey for a training. `:trainingId` accepts the UUID or code.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** `{ "type": "pre_training" | "post_training", "title": "…", "questions": [ { "id": "q1", "type": "rating", "label": "…" }, … ] }` — `questions` must be a non-empty array of objects.
+- **`201` response:** `{ "survey": { "id", "training_id", "type", "title", "questions", "assigned_at" } }`
+- **Errors:** `422` invalid body · `404` training not found · `403` not an admin
+
+### 3.7.2 `GET /api/admin/trainings/:trainingId/surveys`
+
+List a training's surveys, each with a `response_count`.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:** `{ "surveys": [ { "id", "training_id", "type", "title", "questions", "assigned_at", "response_count" } ] }`
+- **Errors:** `404` training not found · `403` not an admin
+
+### 3.7.3 `GET /api/admin/surveys/:surveyId/responses`
+
+All responses for a survey (analytics).
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:**
+  ```json
+  {
+    "survey": { "id": "…", "training_id": "…", "type": "post_training", "title": "Course Feedback", "questions": [ … ], "assigned_at": "…" },
+    "responses": [
+      { "id": "…", "participant_id": "…", "name": "Lena Ng", "email": "lena@acme.test", "answers": { "q1": 5, "q2": "Great course" }, "submitted_at": "…" }
+    ]
+  }
+  ```
+- **Errors:** `404` survey not found · `403` not an admin
+
+### 3.7.4 `GET /api/learner/surveys`
+
+Surveys attached to the caller's enrolled trainings (excludes cancelled/transferred enrolments). **Capability-based** (no role gate).
+
+- **Auth:** Bearer access token
+- **`200` response:**
+  ```json
+  {
+    "surveys": [
+      {
+        "id": "019f653a-…",
+        "type": "post_training",
+        "title": "Course Feedback",
+        "questions": [ { "id": "q1", "type": "rating", "label": "Rate the content" } ],
+        "training_code": "TRN-2026-0002",
+        "training_title": "PRINCE2 Foundation",
+        "assigned_at": "…",
+        "answered": false
+      }
+    ]
+  }
+  ```
+  `answered` is `true` once the caller has submitted this survey — use it to hide/disable already-completed forms.
+- **Errors:** `401` no/invalid token
+
+### 3.7.5 `POST /api/learner/surveys/:surveyId/responses`
+
+Submit a survey response. The caller must be an active participant in the survey's training; one response per participant per survey.
+
+- **Auth:** Bearer access token
+- **Body:** `{ "answers": { "q1": 5, "q2": "Great course" } }` — non-empty `{ questionId: answer }` map.
+- **`201` response:** `{ "id", "survey_id", "submitted_at" }`
+- **Errors:** `422` empty/invalid answers · `404` survey not found · `403` not enrolled in the survey's training · `409` already submitted
+
+---
+
 ## 4. Frontend integration
 
 ### 4.1 Recommended flow

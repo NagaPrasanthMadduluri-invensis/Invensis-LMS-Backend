@@ -126,26 +126,25 @@ router.patch(
   asyncHandler(ctrl.updateTraining)
 );
 
-/* ── Support tickets ── */
-router.get(
-  "/tickets",
+router.post(
+  "/trainings/:trainingId/surveys",
   verifyToken,
   requireRole("admin"),
-  asyncHandler(ticketCtrl.adminList)
+  asyncHandler(ctrl.createSurvey)
 );
 
 router.get(
-  "/tickets/:ticketId",
+  "/trainings/:trainingId/surveys",
   verifyToken,
   requireRole("admin"),
-  asyncHandler(ticketCtrl.adminGet)
+  asyncHandler(ctrl.listTrainingSurveys)
 );
 
-router.patch(
-  "/tickets/:ticketId",
+router.get(
+  "/surveys/:surveyId/responses",
   verifyToken,
   requireRole("admin"),
-  asyncHandler(ticketCtrl.adminUpdate)
+  asyncHandler(ctrl.listSurveyResponses)
 );
 
 export default router;

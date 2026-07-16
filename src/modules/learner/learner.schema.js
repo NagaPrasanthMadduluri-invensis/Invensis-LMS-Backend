@@ -9,3 +9,12 @@ export const certificateSurveySchema = z.object({
   would_recommend: z.boolean(),
   comments: z.string().trim().max(2000).optional(),
 });
+
+// General survey response — answers map question id → answer. Shape of each
+// answer is owned by the frontend (matches the survey's questions), so it's
+// stored flexibly; we only require a non-empty map.
+export const submitSurveySchema = z.object({
+  answers: z
+    .record(z.string(), z.any())
+    .refine((o) => Object.keys(o).length > 0, { message: "answers must contain at least one entry" }),
+});

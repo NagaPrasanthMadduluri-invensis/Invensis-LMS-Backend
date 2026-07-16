@@ -10,6 +10,8 @@ import {
   participants,
   certificates,
   users,
+  surveys,
+  surveyResponses,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -2165,5 +2167,104 @@ export async function getAnalytics(filters = {}) {
     duration_options: durationOptionsRes.rows.map((r) => r.hours),
     job_title_options: jobTitleOptionsRes.rows.map((r) => r.v),
     department_options: departmentOptionsRes.rows.map((r) => r.v),
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Surveys (pre/post-training feedback forms)
+   ───────────────────────────────────────────────────────── */
+
+function publicSurvey(s, responseCount) {
+  return {
+    id: s.id,
+    training_id: s.trainingId,
+    type: s.type,
+    title: s.title,
+    questions: s.questions,
+    assigned_at: s.assignedAt,
+    ...(responseCount !== undefined ? { response_count: responseCount } : {}),
+  };
+}
+
+// Create (assign) a survey for a training.
+export async function createSurvey(adminId, trainingRef, body, ip) {
+  return db.transaction(async (tx) => {
+    const training = await resolveTraining(tx, trainingRef);
+
+    const [survey] = await tx
+      .insert(surveys)
+      .values({
+        trainingId: training.id,
+        type: body.type,
+        title: body.title,
+        questions: body.questions,
+      })
+      .returning();
+
+    await writeAudit(tx, {
+      entityType: "survey",
+      entityId: survey.id,
+      action: "survey_created",
+      actorId: adminId,
+      after: { training_code: training.code, type: survey.type, title: survey.title },
+      ipAddress: ip,
+    });
+
+    return publicSurvey(survey);
+  });
+}
+
+// List a training's surveys, each with its response count.
+export async function listTrainingSurveys(trainingRef) {
+  const training = await resolveTraining(db, trainingRef);
+
+  const rows = await db
+    .select({
+      id: surveys.id,
+      trainingId: surveys.trainingId,
+      type: surveys.type,
+      title: surveys.title,
+      questions: surveys.questions,
+      assignedAt: surveys.assignedAt,
+      responseCount: sql`(SELECT count(*)::int FROM survey_responses r WHERE r.survey_id = ${surveys.id})`,
+    })
+    .from(surveys)
+    .where(eq(surveys.trainingId, training.id))
+    .orderBy(desc(surveys.assignedAt));
+
+  return { surveys: rows.map((s) => publicSurvey(s, s.responseCount)) };
+}
+
+// All responses for a survey (admin analytics).
+export async function listSurveyResponses(surveyId) {
+  if (!UUID_RE.test(surveyId)) throw new AppError("Survey not found", 404);
+
+  const [survey] = await db.select().from(surveys).where(eq(surveys.id, surveyId)).limit(1);
+  if (!survey) throw new AppError("Survey not found", 404);
+
+  const responses = await db
+    .select({
+      id: surveyResponses.id,
+      participantId: participants.id,
+      name: participants.name,
+      email: participants.email,
+      answers: surveyResponses.answers,
+      submittedAt: surveyResponses.submittedAt,
+    })
+    .from(surveyResponses)
+    .innerJoin(participants, eq(surveyResponses.participantId, participants.id))
+    .where(eq(surveyResponses.surveyId, surveyId))
+    .orderBy(desc(surveyResponses.submittedAt));
+
+  return {
+    survey: publicSurvey(survey),
+    responses: responses.map((r) => ({
+      id: r.id,
+      participant_id: r.participantId,
+      name: r.name,
+      email: r.email,
+      answers: r.answers,
+      submitted_at: r.submittedAt,
+    })),
   };
 }

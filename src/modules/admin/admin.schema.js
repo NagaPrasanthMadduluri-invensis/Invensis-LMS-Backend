@@ -125,3 +125,11 @@ export const transferEnrolmentSchema = z.object({
   training_id: z.string().trim().min(1, "Target training_id (UUID or code) is required"),
   reason: z.string().trim().min(1, "A reason is required"),
 });
+
+// Survey authoring. `questions` is a flexible array of question objects — the
+// frontend owns their exact shape, so we only require a non-empty array of objects.
+export const createSurveySchema = z.object({
+  type: z.enum(["pre_training", "post_training"]),
+  title: z.string().trim().min(1, "Title is required"),
+  questions: z.array(z.object({}).passthrough()).min(1, "At least one question is required"),
+});
