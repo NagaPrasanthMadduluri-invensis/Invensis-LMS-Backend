@@ -30,7 +30,7 @@ function trainingConds(f, alias) {
     c.push(sql`exists (
       select 1 from schedules s
       where s.id = ${a}.schedule_id
-        and round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int = ${f.duration})`);
+        and round(mod(extract(epoch from (s.end_time - s.start_time))::numeric + 86400, 86400) / 3600)::int = ${f.duration})`);
   return sql.join(c, sql` and `);
 }
 
@@ -208,7 +208,7 @@ export async function getSalesReport(filters = {}) {
     `),
     db.execute(sql`select distinct country as location from participants where country is not null order by 1`),
     db.execute(sql`
-      select distinct round(extract(epoch from (end_time - start_time)) / 3600)::int as hours
+      select distinct round(mod(extract(epoch from (end_time - start_time))::numeric + 86400, 86400) / 3600)::int as hours
       from schedules order by 1
     `),
 

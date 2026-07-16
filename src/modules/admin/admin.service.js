@@ -1111,7 +1111,7 @@ export async function getDashboard() {
       select tr.id, u.name, tr.is_active, tr.created_at,
         ti.delivery_mode, ti.enrolled_count as learners,
         s.start_date, s.end_date, s.duration_hours,
-        round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int as daily_hours,
+        round(mod(extract(epoch from (s.end_time - s.start_time))::numeric + 86400, 86400) / 3600)::int as daily_hours,
         coalesce(s.venue->>'city', case when ti.delivery_mode is not null then 'Virtual / Online' end) as location
       from trainers tr
       join users u on u.id = tr.user_id
@@ -1425,7 +1425,7 @@ export async function getAnalytics(filters = {}) {
       c.push(sql`exists (
         select 1 from schedules s
         where s.id = ${a}.schedule_id
-          and round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int = ${f.duration})`);
+          and round(mod(extract(epoch from (s.end_time - s.start_time))::numeric + 86400, 86400) / 3600)::int = ${f.duration})`);
     return sql.join(c, sql` and `);
   };
 
@@ -1630,7 +1630,7 @@ export async function getAnalytics(filters = {}) {
 
     // Enrolments grouped by daily session length (hours/day).
     db.execute(sql`
-      select round(extract(epoch from (s.end_time - s.start_time)) / 3600)::int as hours,
+      select round(mod(extract(epoch from (s.end_time - s.start_time))::numeric + 86400, 86400) / 3600)::int as hours,
         count(distinct ti.id)::int as trainings,
         count(e.id)::int as enrolments
       from enrolments e
@@ -1686,7 +1686,7 @@ export async function getAnalytics(filters = {}) {
       where country is not null order by 1
     `),
     db.execute(sql`
-      select distinct round(extract(epoch from (end_time - start_time)) / 3600)::int as hours
+      select distinct round(mod(extract(epoch from (end_time - start_time))::numeric + 86400, 86400) / 3600)::int as hours
       from schedules order by 1
     `),
 
