@@ -1,5 +1,6 @@
 import { Router } from "express";
 import * as ctrl from "./admin.controller.js";
+import * as ticketCtrl from "../tickets/tickets.controller.js";
 import { verifyToken } from "../../middleware/verify-token.js";
 import { requireRole } from "../../middleware/require-role.js";
 import { asyncHandler } from "../../lib/async-handler.js";
@@ -123,6 +124,28 @@ router.patch(
   verifyToken,
   requireRole("admin"),
   asyncHandler(ctrl.updateTraining)
+);
+
+/* ── Support tickets ── */
+router.get(
+  "/tickets",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminList)
+);
+
+router.get(
+  "/tickets/:ticketId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminGet)
+);
+
+router.patch(
+  "/tickets/:ticketId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminUpdate)
 );
 
 export default router;

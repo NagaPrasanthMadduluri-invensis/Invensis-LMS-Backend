@@ -25,6 +25,15 @@ export const sessionStatusEnum = pgEnum("session_status", ["scheduled", "ongoing
 export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "cancelled", "transferred", "completed", "failed"]);
 export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "present", "partial", "absent"]);
 export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
+export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
+export const ticketCategoryEnum = pgEnum("ticket_category", [
+  "reschedule_training",
+  "cancel_training",
+  "certificate_issue",
+  "training_missed",
+  "other",
+]);
+export const ticketPriorityEnum = pgEnum("ticket_priority", ["low", "medium", "high", "urgent"]);
 
 /* ── users ─────────────────────────────────────────────── */
 export const users = pgTable("users", {
@@ -320,5 +329,34 @@ export const auditLog = pgTable(
   (t) => ({
     entityIdx: index("idx_audit_entity").on(t.entityType, t.entityId),
     actorIdx: index("idx_audit_actor_time").on(t.actorId, t.occurredAt),
+  })
+);
+
+/* ── support tickets ───────────────────────────────────────
+   Raised by a learner from the learner portal, triaged by admins in the
+   Tickets module. Status-only workflow (no threaded replies); priority is
+   derived from the category at creation. `training_id` is required for the
+   training-related categories and null for 'other'. */
+export const tickets = pgTable(
+  "tickets",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    code: text("code").notNull().unique(), // TKT-YYYY-NNNN
+    participantId: uuid("participant_id").notNull().references(() => participants.id),
+    userId: uuid("user_id").references(() => users.id), // login identity of the raiser
+    category: ticketCategoryEnum("category").notNull(),
+    trainingId: uuid("training_id").references(() => trainingIds.id), // null for 'other'
+    subject: text("subject").notNull(),
+    description: text("description").notNull(),
+    status: ticketStatusEnum("status").notNull().default("open"),
+    priority: ticketPriorityEnum("priority").notNull().default("medium"),
+    resolvedBy: uuid("resolved_by").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    participantIdx: index("idx_ticket_participant").on(t.participantId, t.createdAt),
+    statusIdx: index("idx_ticket_status_created").on(t.status, t.createdAt),
   })
 );

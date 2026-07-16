@@ -1,5 +1,6 @@
 import { Router } from "express";
 import * as ctrl from "./learner.controller.js";
+import * as ticketCtrl from "../tickets/tickets.controller.js";
 import { verifyToken } from "../../middleware/verify-token.js";
 import { requireRole } from "../../middleware/require-role.js";
 import { asyncHandler } from "../../lib/async-handler.js";
@@ -50,5 +51,11 @@ router.get(
   verifyToken,
   asyncHandler(ctrl.getCertificate)
 );
+
+// Support tickets — scoped to the caller's own participant profile
+// (capability-based, no role gate, like /dashboard and /trainings).
+router.get("/tickets", verifyToken, asyncHandler(ticketCtrl.learnerList));
+router.post("/tickets", verifyToken, asyncHandler(ticketCtrl.learnerCreate));
+router.get("/tickets/:ticketId", verifyToken, asyncHandler(ticketCtrl.learnerGet));
 
 export default router;
