@@ -62,6 +62,13 @@ router.get(
   asyncHandler(ctrl.listParticipants)
 );
 
+router.get(
+  "/participants/:participantId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getParticipantDetail)
+);
+
 router.patch(
   "/participants/:participantId",
   verifyToken,

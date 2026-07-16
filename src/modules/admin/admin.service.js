@@ -8,6 +8,7 @@ import {
   enrolments,
   schedules,
   participants,
+  certificates,
   users,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
@@ -591,6 +592,19 @@ export async function onboardTrainer(adminId, body, ip) {
   return result;
 }
 
+// Bucket a training into a display category from its lifecycle status.
+function trainingCategory(status) {
+  if (status === "completed") return "completed";
+  if (status === "ongoing") return "ongoing";
+  if (status === "cancelled") return "cancelled";
+  return "upcoming"; // pending | active — scheduled but not started
+}
+
+// Round a numeric-ish value to 2dp, preserving null.
+function round2(v) {
+  return v == null ? null : Number(Number(v).toFixed(2));
+}
+
 export async function getTrainerDetail(trainerId) {
   const [row] = await db
     .select({ t: trainers, u: users })
@@ -600,29 +614,97 @@ export async function getTrainerDetail(trainerId) {
     .limit(1);
   if (!row) throw new AppError("Trainer not found", 404);
 
+  // Every training the trainer has been assigned to, enriched with schedule
+  // dates + seat counts so the admin can see the full picture per training.
   const history = await db
     .select({
       trainingId: trainerAssignments.trainingId,
       code: trainingIds.code,
       title: trainingIds.title,
+      bucket: trainingIds.bucket,
+      deliveryMode: trainingIds.deliveryMode,
+      status: trainingIds.status,
+      capacity: trainingIds.capacity,
+      enrolledCount: trainingIds.enrolledCount,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
       assignedAt: trainerAssignments.assignedAt,
       removedAt: trainerAssignments.removedAt,
     })
     .from(trainerAssignments)
     .innerJoin(trainingIds, eq(trainerAssignments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .where(eq(trainerAssignments.trainerId, trainerId))
     .orderBy(desc(trainerAssignments.assignedAt));
 
-  return {
-    ...publicTrainer(row.t, row.u),
-    assignments: history.map((a) => ({
+  // Feedback ratings come from the post-training survey learners submit — stored
+  // as jsonb on the certificate ({ overall_rating, trainer_rating, content_rating,
+  // would_recommend }). Aggregate them per-training and overall for this trainer.
+  const ratingSql = (extra) => sql`
+    SELECT
+      ${extra}
+      count(*)::int AS reviews,
+      avg((c.survey_responses->>'trainer_rating')::numeric) AS trainer_rating,
+      avg((c.survey_responses->>'overall_rating')::numeric) AS overall_rating,
+      avg((c.survey_responses->>'content_rating')::numeric) AS content_rating,
+      count(*) FILTER (WHERE (c.survey_responses->>'would_recommend')::boolean) AS recommend
+    FROM certificates c
+    JOIN enrolments e ON e.id = c.enrolment_id
+    WHERE e.training_id IN (
+      SELECT training_id FROM trainer_assignments WHERE trainer_id = ${trainerId}
+    )
+  `;
+
+  const perTraining = await db.execute(sql`${ratingSql(sql`e.training_id AS training_id,`)} GROUP BY e.training_id`);
+  const ratingByTraining = new Map(perTraining.rows.map((r) => [r.training_id, r]));
+
+  const overallRows = await db.execute(ratingSql(sql``));
+  const overall = overallRows.rows[0] || {};
+  const reviews = Number(overall.reviews || 0);
+
+  const assignments = history.map((a) => {
+    const r = ratingByTraining.get(a.trainingId);
+    const rReviews = r ? Number(r.reviews) : 0;
+    return {
       training_id: a.trainingId,
       code: a.code,
       title: a.title,
+      bucket: a.bucket,
+      delivery_mode: a.deliveryMode,
+      status: a.status,
+      category: trainingCategory(a.status),
+      capacity: a.capacity,
+      enrolled_count: a.enrolledCount,
+      start_date: a.startDate,
+      end_date: a.endDate,
       assigned_at: a.assignedAt,
       removed_at: a.removedAt,
       active: a.removedAt == null,
-    })),
+      reviews: rReviews,
+      trainer_rating: r ? round2(r.trainer_rating) : null,
+    };
+  });
+
+  const countOf = (cat) => assignments.filter((a) => a.category === cat).length;
+
+  return {
+    ...publicTrainer(row.t, row.u),
+    rating: {
+      reviews,
+      trainer_rating: round2(overall.trainer_rating),
+      overall_rating: round2(overall.overall_rating),
+      content_rating: round2(overall.content_rating),
+      recommend_pct: reviews > 0 ? Math.round((Number(overall.recommend || 0) / reviews) * 100) : null,
+    },
+    summary: {
+      total: assignments.length,
+      completed: countOf("completed"),
+      ongoing: countOf("ongoing"),
+      upcoming: countOf("upcoming"),
+      cancelled: countOf("cancelled"),
+      total_participants: assignments.reduce((s, a) => s + (a.enrolled_count || 0), 0),
+    },
+    assignments,
   };
 }
 
@@ -796,6 +878,117 @@ export async function listParticipants({ search, page, limit, location, job_titl
     filters: {
       job_titles: jobTitleRows.map((r) => r.value).filter(Boolean),
       locations: locationRows.map((r) => r.value).filter(Boolean),
+    },
+  };
+}
+
+// Bucket an enrolment into a display category for the participant detail view.
+// Combines the enrolment status with the training's own lifecycle status so the
+// admin can tell completed vs still-upcoming vs in-progress trainings apart.
+function enrolmentCategory(enrolStatus, trainingStatus) {
+  if (enrolStatus === "completed") return "completed";
+  if (enrolStatus === "cancelled") return "cancelled";
+  if (enrolStatus === "transferred") return "transferred";
+  if (enrolStatus === "failed") return "failed";
+  // status === 'confirmed' — split by where the training itself is
+  if (trainingStatus === "ongoing") return "ongoing";
+  return "upcoming";
+}
+
+// Full profile for a single participant plus every training they enrolled in,
+// each tagged with a display category (completed / ongoing / upcoming /
+// cancelled / transferred / failed) and whether a certificate was issued.
+// Powers the admin User Management → click-through detail drawer.
+export async function getParticipantDetail(participantId) {
+  const [p] = await db
+    .select({
+      id: participants.id,
+      userId: participants.userId,
+      name: participants.name,
+      email: participants.email,
+      phone: participants.phone,
+      jobTitle: participants.jobTitle,
+      city: participants.city,
+      country: participants.country,
+      createdAt: participants.createdAt,
+      accountActive: users.isActive,
+      hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
+    })
+    .from(participants)
+    .leftJoin(users, eq(participants.userId, users.id))
+    .where(eq(participants.id, participantId))
+    .limit(1);
+
+  if (!p) throw new AppError("Participant not found", 404);
+
+  const rows = await db
+    .select({
+      enrolmentId: enrolments.id,
+      status: enrolments.status,
+      attendanceStatus: enrolments.attendanceStatus,
+      enrolledAt: enrolments.enrolledAt,
+      orderId: enrolments.orderId,
+      trainingId: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      bucket: trainingIds.bucket,
+      deliveryMode: trainingIds.deliveryMode,
+      trainingStatus: trainingIds.status,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      certificateCode: certificates.certificateCode,
+    })
+    .from(enrolments)
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .where(eq(enrolments.participantId, participantId))
+    .orderBy(desc(enrolments.enrolledAt));
+
+  const enrolled = rows.map((r) => ({
+    enrolment_id: r.enrolmentId,
+    training_id: r.trainingId,
+    training_code: r.code,
+    title: r.title,
+    bucket: r.bucket,
+    delivery_mode: r.deliveryMode,
+    training_status: r.trainingStatus,
+    status: r.status,
+    attendance_status: r.attendanceStatus,
+    start_date: r.startDate,
+    end_date: r.endDate,
+    enrolled_at: r.enrolledAt,
+    added_manually: r.orderId == null,
+    certificate_issued: r.certificateCode != null,
+    certificate_code: r.certificateCode ?? null,
+    category: enrolmentCategory(r.status, r.trainingStatus),
+  }));
+
+  const countOf = (...cats) => enrolled.filter((e) => cats.includes(e.category)).length;
+
+  return {
+    participant: {
+      id: p.id,
+      user_id: p.userId,
+      name: p.name,
+      email: p.email,
+      phone: p.phone,
+      job_title: p.jobTitle,
+      city: p.city,
+      country: p.country,
+      location: [p.city, p.country].filter(Boolean).join(", ") || null,
+      account_active: p.accountActive ?? false,
+      has_password: p.hasPassword ?? false,
+      created_at: p.createdAt,
+    },
+    enrolments: enrolled,
+    summary: {
+      total: enrolled.length,
+      completed: countOf("completed"),
+      ongoing: countOf("ongoing"),
+      upcoming: countOf("upcoming"),
+      inactive: countOf("cancelled", "transferred", "failed"),
+      certificates: enrolled.filter((e) => e.certificate_issued).length,
     },
   };
 }

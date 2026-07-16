@@ -79,6 +79,10 @@ export async function listParticipants(req, res) {
   res.json(await adminService.listParticipants(query));
 }
 
+export async function getParticipantDetail(req, res) {
+  res.json(await adminService.getParticipantDetail(req.params.participantId));
+}
+
 export async function updateParticipant(req, res) {
   const body = updateParticipantSchema.parse(req.body);
   const participant = await adminService.updateParticipant(
