@@ -26,6 +26,9 @@ export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "can
 export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "present", "partial", "absent"]);
 export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
 export const surveyTypeEnum = pgEnum("survey_type", ["pre_training", "post_training"]);
+export const ticketCategoryEnum = pgEnum("ticket_category", ["reschedule_training", "cancel_training", "certificate_issue", "training_missed", "other"]);
+export const ticketPriorityEnum = pgEnum("ticket_priority", ["low", "medium", "high", "urgent"]);
+export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
 
 /* ── users ─────────────────────────────────────────────── */
 export const users = pgTable("users", {
