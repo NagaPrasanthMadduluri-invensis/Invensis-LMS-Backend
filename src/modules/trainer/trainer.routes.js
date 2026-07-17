@@ -27,4 +27,18 @@ router.patch(
   asyncHandler(ctrl.updateSessionTopics)
 );
 
+router.get(
+  "/sessions/:sessionId/attendance",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.getSessionAttendance)
+);
+
+router.put(
+  "/sessions/:sessionId/attendance",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.markSessionAttendance)
+);
+
 export default router;

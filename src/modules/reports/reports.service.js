@@ -501,3 +501,22 @@ export async function getSalesRecords(filters = {}) {
     })),
   };
 }
+
+// Attendance rows (one per session × participant marked), newest training first.
+// Optional single-training scope by code or UUID.
+export async function getAttendanceRecords({ training_id } = {}) {
+  const conds = [sql`true`];
+  if (training_id) conds.push(sql`(t.code = ${training_id} OR t.id::text = ${training_id})`);
+  const { rows } = await db.execute(sql`
+    SELECT t.code AS training_code, t.title AS training_title, ts.day_number,
+           ts.start_time AS session_start, p.name AS participant_name,
+           p.email AS participant_email, ar.status, ar.marked_at
+    FROM attendance_records ar
+    JOIN training_sessions ts ON ts.id = ar.session_id
+    JOIN training_ids t ON t.id = ts.training_id
+    JOIN participants p ON p.id = ar.participant_id
+    WHERE ${sql.join(conds, sql` AND `)}
+    ORDER BY t.code, ts.day_number, p.name
+  `);
+  return rows;
+}

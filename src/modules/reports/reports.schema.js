@@ -43,3 +43,9 @@ export const reportRecordsQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(5000).default(1000),
 });
+
+// Attendance export — optional single-training scope, JSON (default) or CSV.
+export const attendanceReportQuerySchema = z.object({
+  training_id: z.preprocess(blankToUndef, z.string().trim().min(1).optional()),
+  format: z.preprocess(blankToUndef, z.enum(["json", "csv"]).default("json")),
+});

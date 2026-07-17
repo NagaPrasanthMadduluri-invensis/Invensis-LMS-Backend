@@ -1186,6 +1186,62 @@ Submit a survey response. The caller must be an active participant in the survey
 
 ---
 
+## 3.8 Attendance
+
+Per-session, per-participant attendance. The **assigned trainer** marks it; a rollup writes each enrolment's overall `attendance_status` (`present | partial | absent`, used by the analytics). Per-session status is one of **`present | absent | late | excused`**; an unmarked participant reads `null`.
+
+### 3.8.1 `GET /api/trainer/sessions/:sessionId/attendance`
+
+Roster for a session with each participant's current status. Trainer must be assigned to the session's training.
+
+- **Auth:** Bearer · role `trainer` (+ assigned)
+- **`200`:** `{ "session": { "id", "day_number", "start_time", "end_time", "status" }, "participants": [ { "participant_id", "name", "job_title", "status": "present" | null } ] }`
+- **Errors:** `404` session not found · `403` not assigned to this training
+
+### 3.8.2 `PUT /api/trainer/sessions/:sessionId/attendance`
+
+Bulk mark/update attendance (idempotent upsert; one record per participant per session). Rolls up each affected enrolment's overall status.
+
+- **Auth:** Bearer · role `trainer` (+ assigned)
+- **Body:** `{ "records": [ { "participant_id": "…", "status": "present" | "absent" | "late" | "excused" } ] }` (≥1)
+- **`200`:** `{ "session_id", "marked": <n>, "records": [ { "participant_id", "status" } ] }`
+- **Errors:** `422` invalid status / participant not enrolled in this training · `404` session not found · `403` not assigned
+
+### 3.8.3 `GET /api/admin/trainings/:trainingId/attendance`
+
+Attendance matrix (sessions × participants) for the admin view. `:trainingId` = UUID or code.
+
+- **Auth:** Bearer · role `admin`
+- **`200`:**
+  ```json
+  {
+    "training_id": "TRN-2026-0016",
+    "title": "PMP Certification Training",
+    "sessions": [ { "id": "…", "day_number": 1, "start_time": "…", "status": "scheduled" } ],
+    "participants": [
+      { "participant_id": "…", "name": "Meera Nair", "email": "…", "overall_status": "partial",
+        "attended": 1, "total_sessions": 4, "attendance": { "<sessionId>": "present", "<sessionId>": null } }
+    ]
+  }
+  ```
+
+### 3.8.4 `GET /api/learner/attendance`
+
+The caller's own attendance grouped by training. Capability-based (no role gate).
+
+- **Auth:** Bearer
+- **`200`:** `{ "trainings": [ { "training_code", "title", "attended", "total_sessions", "sessions": [ { "day_number", "start_time", "status": "present" | null } ] } ] }`
+
+### 3.8.5 `GET /api/reports/attendance`
+
+Attendance export for admins. `?format=csv` streams a CSV download; default JSON. Optional `?training_id=` (UUID or code) scopes to one training.
+
+- **Auth:** Bearer · role `admin`
+- **JSON `200`:** `{ "records": [ { "training_code", "training_title", "day_number", "session_start", "participant_name", "participant_email", "status", "marked_at" } ] }`
+- **CSV:** `Content-Type: text/csv` attachment with the same columns.
+
+---
+
 ## 4. Frontend integration
 
 ### 4.1 Recommended flow

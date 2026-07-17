@@ -26,6 +26,10 @@ export async function listSurveyResponses(req, res) {
   res.json(await adminService.listSurveyResponses(req.params.surveyId));
 }
 
+export async function getTrainingAttendance(req, res) {
+  res.json(await adminService.getTrainingAttendance(req.params.trainingId));
+}
+
 export async function getDashboard(req, res) {
   res.json(await adminService.getDashboard());
 }

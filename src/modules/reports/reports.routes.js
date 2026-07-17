@@ -12,4 +12,7 @@ router.get("/sales", verifyToken, requireRole("admin"), asyncHandler(ctrl.getSal
 // Raw row-level records (one row per enrolment) for the raw-data export.
 router.get("/sales/records", verifyToken, requireRole("admin"), asyncHandler(ctrl.getSalesRecords));
 
+// Attendance export — JSON (default) or ?format=csv; optional ?training_id=.
+router.get("/attendance", verifyToken, requireRole("admin"), asyncHandler(ctrl.getAttendanceReport));
+
 export default router;

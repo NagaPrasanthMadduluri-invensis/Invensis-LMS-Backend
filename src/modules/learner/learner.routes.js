@@ -91,4 +91,11 @@ router.post(
   asyncHandler(ticketCtrl.learnerReply)
 );
 
+// The caller's own attendance across their enrolled trainings (capability-based).
+router.get(
+  "/attendance",
+  verifyToken,
+  asyncHandler(ctrl.listMyAttendance)
+);
+
 export default router;

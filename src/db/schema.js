@@ -29,6 +29,7 @@ export const surveyTypeEnum = pgEnum("survey_type", ["pre_training", "post_train
 export const ticketCategoryEnum = pgEnum("ticket_category", ["reschedule_training", "cancel_training", "certificate_issue", "training_missed", "other"]);
 export const ticketPriorityEnum = pgEnum("ticket_priority", ["low", "medium", "high", "urgent"]);
 export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
+export const sessionAttendanceStatusEnum = pgEnum("session_attendance_status", ["present", "absent", "late", "excused"]);
 
 /* ── users ─────────────────────────────────────────────── */
 export const users = pgTable("users", {
@@ -283,6 +284,30 @@ export const enrolments = pgTable(
     oneActiveEnrolment: uniqueIndex("uniq_active_enrolment")
       .on(t.trainingId, t.participantId)
       .where(sql`status NOT IN ('cancelled', 'transferred')`),
+  })
+);
+
+/* ── attendance_records (per-session, per-participant) ─────
+   One row per (session, participant); its absence = not yet marked. Trainers
+   mark it; a rollup writes each enrolment's overall attendance_status for the
+   analytics. Distinct from enrolments.attendance_status (the rolled-up outcome). */
+export const attendanceRecords = pgTable(
+  "attendance_records",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    sessionId: uuid("session_id").notNull().references(() => trainingSessions.id),
+    participantId: uuid("participant_id").notNull().references(() => participants.id),
+    status: sessionAttendanceStatusEnum("status").notNull(),
+    markedBy: uuid("marked_by").references(() => users.id), // trainer/admin who marked
+    markedAt: timestamp("marked_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    onesPerSessionParticipant: uniqueIndex("uniq_attendance_session_participant").on(
+      t.sessionId,
+      t.participantId
+    ),
+    sessionIdx: index("idx_attendance_session").on(t.sessionId),
   })
 );
 

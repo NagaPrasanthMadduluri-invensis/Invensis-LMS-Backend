@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, notInArray } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -8,9 +8,36 @@ import {
   schedules,
   enrolments,
   participants,
+  attendanceRecords,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
+import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
+
+// Assert the JWT user is the trainer currently assigned to `trainingId`.
+// Returns the trainer id; throws 403 otherwise. `runner` is a db or tx handle.
+async function assertAssigned(runner, userId, trainingId) {
+  const [trainer] = await runner
+    .select({ id: trainers.id })
+    .from(trainers)
+    .where(eq(trainers.userId, userId))
+    .limit(1);
+  if (!trainer) throw new AppError("Trainer profile not found", 403);
+
+  const [assignment] = await runner
+    .select({ id: trainerAssignments.id })
+    .from(trainerAssignments)
+    .where(
+      and(
+        eq(trainerAssignments.trainingId, trainingId),
+        eq(trainerAssignments.trainerId, trainer.id),
+        isNull(trainerAssignments.removedAt)
+      )
+    )
+    .limit(1);
+  if (!assignment) throw new AppError("You are not assigned to this training", 403);
+  return trainer.id;
+}
 
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -220,6 +247,119 @@ export async function updateSessionTopics(userId, sessionId, plannedTopics, ip) 
       id: sessionId,
       day_number: session.dayNumber,
       planned_topics: plannedTopics,
+    };
+  });
+}
+
+/* ─────────────────────────────────────────────────────────
+   Attendance — per-session marking by the assigned trainer.
+   ───────────────────────────────────────────────────────── */
+
+// Roster for a session with each participant's current attendance (null = unmarked).
+export async function getSessionAttendance(userId, sessionId) {
+  const [session] = await db
+    .select()
+    .from(trainingSessions)
+    .where(eq(trainingSessions.id, sessionId))
+    .limit(1);
+  if (!session) throw new AppError("Session not found", 404);
+  await assertAssigned(db, userId, session.trainingId);
+
+  const roster = await db
+    .select({ participantId: participants.id, name: participants.name, jobTitle: participants.jobTitle })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .where(
+      and(
+        eq(enrolments.trainingId, session.trainingId),
+        notInArray(enrolments.status, ["cancelled", "transferred"])
+      )
+    )
+    .orderBy(asc(participants.name));
+
+  const recs = await db
+    .select({ participantId: attendanceRecords.participantId, status: attendanceRecords.status })
+    .from(attendanceRecords)
+    .where(eq(attendanceRecords.sessionId, sessionId));
+  const byParticipant = new Map(recs.map((r) => [r.participantId, r.status]));
+
+  return {
+    session: {
+      id: session.id,
+      day_number: session.dayNumber,
+      start_time: session.startTime,
+      end_time: session.endTime,
+      status: session.status,
+    },
+    participants: roster.map((p) => ({
+      participant_id: p.participantId,
+      name: p.name,
+      job_title: p.jobTitle,
+      status: byParticipant.get(p.participantId) ?? null,
+    })),
+  };
+}
+
+// Bulk upsert attendance for a session, then roll up each enrolment's overall status.
+export async function markSessionAttendance(userId, sessionId, records, ip) {
+  return db.transaction(async (tx) => {
+    const [session] = await tx
+      .select()
+      .from(trainingSessions)
+      .where(eq(trainingSessions.id, sessionId))
+      .limit(1);
+    if (!session) throw new AppError("Session not found", 404);
+    await assertAssigned(tx, userId, session.trainingId);
+
+    const enrolled = await tx
+      .select({ participantId: enrolments.participantId })
+      .from(enrolments)
+      .where(
+        and(
+          eq(enrolments.trainingId, session.trainingId),
+          notInArray(enrolments.status, ["cancelled", "transferred"])
+        )
+      );
+    const validPids = new Set(enrolled.map((e) => e.participantId));
+
+    for (const rec of records) {
+      if (!validPids.has(rec.participant_id)) {
+        throw new AppError(`Participant ${rec.participant_id} is not enrolled in this training`, 422);
+      }
+    }
+
+    for (const rec of records) {
+      await tx
+        .insert(attendanceRecords)
+        .values({ sessionId, participantId: rec.participant_id, status: rec.status, markedBy: userId })
+        .onConflictDoUpdate({
+          target: [attendanceRecords.sessionId, attendanceRecords.participantId],
+          set: { status: rec.status, markedBy: userId, updatedAt: new Date() },
+        });
+    }
+
+    for (const pid of new Set(records.map((r) => r.participant_id))) {
+      await recomputeEnrolmentAttendance(tx, session.trainingId, pid);
+    }
+
+    await writeAudit(tx, {
+      entityType: "training_session",
+      entityId: sessionId,
+      action: "attendance_marked",
+      actorId: userId,
+      after: { count: records.length },
+      ipAddress: ip,
+    });
+
+    const recs = await tx
+      .select({ participantId: attendanceRecords.participantId, status: attendanceRecords.status })
+      .from(attendanceRecords)
+      .where(eq(attendanceRecords.sessionId, sessionId));
+
+    return {
+      session_id: sessionId,
+      marked: records.length,
+      records: recs.map((r) => ({ participant_id: r.participantId, status: r.status })),
     };
   });
 }

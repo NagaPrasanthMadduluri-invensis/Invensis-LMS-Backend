@@ -147,6 +147,13 @@ router.get(
   asyncHandler(ctrl.listSurveyResponses)
 );
 
+router.get(
+  "/trainings/:trainingId/attendance",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getTrainingAttendance)
+);
+
 // Support tickets — admin triage.
 router.get(
   "/tickets",

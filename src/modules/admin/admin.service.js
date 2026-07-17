@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -12,6 +12,7 @@ import {
   users,
   surveys,
   surveyResponses,
+  attendanceRecords,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -2266,5 +2267,82 @@ export async function listSurveyResponses(surveyId) {
       answers: r.answers,
       submitted_at: r.submittedAt,
     })),
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Attendance matrix (admin view of a training's per-session attendance)
+   ───────────────────────────────────────────────────────── */
+export async function getTrainingAttendance(trainingRef) {
+  const training = await resolveTraining(db, trainingRef);
+
+  const sessions = await db
+    .select({
+      id: trainingSessions.id,
+      dayNumber: trainingSessions.dayNumber,
+      startTime: trainingSessions.startTime,
+      status: trainingSessions.status,
+    })
+    .from(trainingSessions)
+    .where(eq(trainingSessions.trainingId, training.id))
+    .orderBy(trainingSessions.dayNumber);
+  const sessionIds = sessions.map((s) => s.id);
+
+  const roster = await db
+    .select({
+      participantId: participants.id,
+      name: participants.name,
+      email: participants.email,
+      overall: enrolments.attendanceStatus,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .where(
+      and(
+        eq(enrolments.trainingId, training.id),
+        sql`${enrolments.status} NOT IN ('cancelled', 'transferred')`
+      )
+    )
+    .orderBy(asc(participants.name));
+
+  const recs = sessionIds.length
+    ? await db
+        .select({
+          sessionId: attendanceRecords.sessionId,
+          participantId: attendanceRecords.participantId,
+          status: attendanceRecords.status,
+        })
+        .from(attendanceRecords)
+        .where(inArray(attendanceRecords.sessionId, sessionIds))
+    : [];
+  const byKey = new Map(recs.map((r) => [`${r.participantId}:${r.sessionId}`, r.status]));
+
+  return {
+    training_id: training.code,
+    title: training.title,
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      day_number: s.dayNumber,
+      start_time: s.startTime,
+      status: s.status,
+    })),
+    participants: roster.map((p) => {
+      const attendance = {};
+      let attended = 0;
+      for (const s of sessions) {
+        const st = byKey.get(`${p.participantId}:${s.id}`) ?? null;
+        attendance[s.id] = st;
+        if (st === "present" || st === "late") attended += 1;
+      }
+      return {
+        participant_id: p.participantId,
+        name: p.name,
+        email: p.email,
+        overall_status: p.overall,
+        attended,
+        total_sessions: sessions.length,
+        attendance,
+      };
+    }),
   };
 }

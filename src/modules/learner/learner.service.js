@@ -12,6 +12,7 @@ import {
   certificates,
   surveys,
   surveyResponses,
+  attendanceRecords,
   users,
   userProfiles,
 } from "../../db/schema.js";
@@ -773,4 +774,74 @@ export async function submitSurveyResponse(userId, surveyId, answers, ip) {
 
     return { id: inserted[0].id, survey_id: surveyId, submitted_at: inserted[0].submittedAt };
   });
+}
+
+/* ─────────────────────────────────────────────────────────
+   Attendance — the caller's own per-session attendance, grouped by training.
+   Capability-based (scoped to the caller's participant/enrolments).
+   ───────────────────────────────────────────────────────── */
+export async function listMyAttendance(userId) {
+  const parts = await db
+    .select({ id: participants.id })
+    .from(participants)
+    .where(eq(participants.userId, userId));
+  const participantIds = parts.map((p) => p.id);
+  if (participantIds.length === 0) return { trainings: [] };
+
+  const enrolled = await db
+    .select({ trainingId: trainingIds.id, code: trainingIds.code, title: trainingIds.title })
+    .from(enrolments)
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .where(
+      and(
+        inArray(enrolments.participantId, participantIds),
+        notInArray(enrolments.status, ["cancelled", "transferred"])
+      )
+    );
+  if (enrolled.length === 0) return { trainings: [] };
+
+  const trainingIdList = enrolled.map((e) => e.trainingId);
+  const sessions = await db
+    .select({
+      id: trainingSessions.id,
+      trainingId: trainingSessions.trainingId,
+      dayNumber: trainingSessions.dayNumber,
+      startTime: trainingSessions.startTime,
+    })
+    .from(trainingSessions)
+    .where(inArray(trainingSessions.trainingId, trainingIdList))
+    .orderBy(trainingSessions.dayNumber);
+  const sessionIds = sessions.map((s) => s.id);
+
+  const recs = sessionIds.length
+    ? await db
+        .select({ sessionId: attendanceRecords.sessionId, status: attendanceRecords.status })
+        .from(attendanceRecords)
+        .where(
+          and(
+            inArray(attendanceRecords.sessionId, sessionIds),
+            inArray(attendanceRecords.participantId, participantIds)
+          )
+        )
+    : [];
+  const statusBySession = new Map(recs.map((r) => [r.sessionId, r.status]));
+
+  return {
+    trainings: enrolled.map((t) => {
+      const own = sessions.filter((s) => s.trainingId === t.trainingId);
+      let attended = 0;
+      const sess = own.map((s) => {
+        const status = statusBySession.get(s.id) ?? null;
+        if (status === "present" || status === "late") attended += 1;
+        return { day_number: s.dayNumber, start_time: s.startTime, status };
+      });
+      return {
+        training_code: t.code,
+        title: t.title,
+        attended,
+        total_sessions: sess.length,
+        sessions: sess,
+      };
+    }),
+  };
 }

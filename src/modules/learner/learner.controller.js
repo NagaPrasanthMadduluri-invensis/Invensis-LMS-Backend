@@ -46,3 +46,7 @@ export async function submitSurveyResponse(req, res) {
   );
   res.status(201).json(result);
 }
+
+export async function listMyAttendance(req, res) {
+  res.json(await learnerService.listMyAttendance(req.user.user_id));
+}
