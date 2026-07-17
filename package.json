@@ -9,7 +9,7 @@
     "start": "node src/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push",
+    "db:push": "echo 'db:push is disabled — generate a migration (npm run db:generate) and deploy it via migrations. Never push to a shared/prod DB.' && exit 1",
     "db:seed": "node src/db/seed.js",
     "db:seed:training": "node src/db/seed-training.js",
     "db:seed:sponsor": "node src/db/seed-sponsor.js",
