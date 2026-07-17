@@ -389,3 +389,21 @@ export const tickets = pgTable(
     statusIdx: index("idx_ticket_status_created").on(t.status, t.createdAt),
   })
 );
+
+/* ── ticket messages (conversation thread) ─────────────────
+   Every reply on a ticket, from either the learner who raised it or an admin.
+   Ordered by created_at to reconstruct the full conversation. */
+export const ticketMessages = pgTable(
+  "ticket_messages",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    ticketId: uuid("ticket_id").notNull().references(() => tickets.id),
+    authorId: uuid("author_id").references(() => users.id), // null = system note
+    authorRole: text("author_role").notNull(), // 'admin' | 'learner'
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    ticketIdx: index("idx_ticket_message_ticket").on(t.ticketId, t.createdAt),
+  })
+);

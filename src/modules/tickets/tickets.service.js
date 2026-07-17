@@ -1,6 +1,6 @@
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
-import { tickets, participants, trainingIds, enrolments } from "../../db/schema.js";
+import { tickets, ticketMessages, participants, trainingIds, enrolments, users } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { CATEGORY_PRIORITY, TRAINING_CATEGORIES } from "./tickets.schema.js";
@@ -43,6 +43,7 @@ const selectCols = {
   createdAt: tickets.createdAt,
   updatedAt: tickets.updatedAt,
   resolvedAt: tickets.resolvedAt,
+  messageCount: sql`(SELECT count(*)::int FROM ticket_messages m WHERE m.ticket_id = ${tickets.id})`,
 };
 
 function ticketDto(r) {
@@ -57,10 +58,34 @@ function ticketDto(r) {
     training: r.trainingId
       ? { id: r.trainingId, code: r.trainingCode, title: r.trainingTitle }
       : null,
+    message_count: Number(r.messageCount ?? 0),
     created_at: r.createdAt,
     updated_at: r.updatedAt,
     resolved_at: r.resolvedAt,
   };
+}
+
+// Full conversation thread for a ticket, oldest first, with author display names.
+async function loadMessages(runner, ticketId) {
+  const rows = await runner
+    .select({
+      id: ticketMessages.id,
+      authorRole: ticketMessages.authorRole,
+      authorName: users.name,
+      body: ticketMessages.body,
+      createdAt: ticketMessages.createdAt,
+    })
+    .from(ticketMessages)
+    .leftJoin(users, eq(ticketMessages.authorId, users.id))
+    .where(eq(ticketMessages.ticketId, ticketId))
+    .orderBy(asc(ticketMessages.createdAt));
+  return rows.map((m) => ({
+    id: m.id,
+    author_role: m.authorRole,
+    author_name: m.authorName || (m.authorRole === "admin" ? "Support team" : "Learner"),
+    body: m.body,
+    created_at: m.createdAt,
+  }));
 }
 
 function summarize(rows) {
@@ -148,7 +173,34 @@ export async function getLearnerTicket(userId, id) {
     .where(and(eq(tickets.id, id), eq(tickets.participantId, participant.id)))
     .limit(1);
   if (!row) throw new AppError("Ticket not found", 404);
-  return { ticket: ticketDto(row) };
+  const messages = await loadMessages(db, id);
+  return { ticket: { ...ticketDto(row), messages } };
+}
+
+// Learner adds a reply to their own ticket's conversation thread.
+export async function addLearnerMessage(userId, ticketId, body, ip) {
+  const participant = await resolveParticipant(db, userId);
+  const [t] = await db
+    .select()
+    .from(tickets)
+    .where(and(eq(tickets.id, ticketId), eq(tickets.participantId, participant.id)))
+    .limit(1);
+  if (!t) throw new AppError("Ticket not found", 404);
+  if (t.status === "closed") throw new AppError("This ticket is closed and can't accept new replies", 400);
+
+  await db.transaction(async (tx) => {
+    await tx.insert(ticketMessages).values({ ticketId, authorId: userId, authorRole: "learner", body });
+    await tx.update(tickets).set({ updatedAt: new Date() }).where(eq(tickets.id, ticketId));
+    await writeAudit(tx, {
+      entityType: "ticket",
+      entityId: ticketId,
+      action: "ticket_reply",
+      actorId: userId,
+      after: { role: "learner" },
+      ipAddress: ip,
+    });
+  });
+  return getLearnerTicket(userId, ticketId);
 }
 
 /* ── Admin ────────────────────────────────────────────────── */
@@ -205,7 +257,31 @@ export async function getAdminTicket(id) {
     .where(eq(tickets.id, id))
     .limit(1);
   if (!row) throw new AppError("Ticket not found", 404);
-  return { ticket: adminTicketDto(row) };
+  const messages = await loadMessages(db, id);
+  return { ticket: { ...adminTicketDto(row), messages } };
+}
+
+// Admin adds a reply. A first reply on an 'open' ticket nudges it to
+// 'in_progress' (admin is now actively handling it); other statuses are left as-is.
+export async function addAdminMessage(adminId, ticketId, body, ip) {
+  const [t] = await db.select().from(tickets).where(eq(tickets.id, ticketId)).limit(1);
+  if (!t) throw new AppError("Ticket not found", 404);
+
+  await db.transaction(async (tx) => {
+    await tx.insert(ticketMessages).values({ ticketId, authorId: adminId, authorRole: "admin", body });
+    const set = { updatedAt: new Date() };
+    if (t.status === "open") set.status = "in_progress";
+    await tx.update(tickets).set(set).where(eq(tickets.id, ticketId));
+    await writeAudit(tx, {
+      entityType: "ticket",
+      entityId: ticketId,
+      action: "ticket_reply",
+      actorId: adminId,
+      after: { role: "admin" },
+      ipAddress: ip,
+    });
+  });
+  return getAdminTicket(ticketId);
 }
 
 export async function updateTicketStatus(adminId, id, body, ip) {

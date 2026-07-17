@@ -92,6 +92,13 @@
       "when": 1784205436886,
       "tag": "0012_condemned_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784280208141,
+      "tag": "0013_stormy_terrax",
+      "breakpoints": true
     }
   ]
 }

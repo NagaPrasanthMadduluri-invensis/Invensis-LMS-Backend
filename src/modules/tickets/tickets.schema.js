@@ -44,6 +44,10 @@ export const updateTicketSchema = z.object({
   status: z.enum(TICKET_STATUSES),
 });
 
+export const ticketMessageSchema = z.object({
+  body: z.string().trim().min(1, "Message can't be empty").max(4000),
+});
+
 export const listTicketsQuerySchema = z.object({
   status: z.enum(TICKET_STATUSES).optional(),
   category: z.enum(TICKET_CATEGORIES).optional(),

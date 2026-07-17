@@ -85,4 +85,10 @@ router.get(
   asyncHandler(ticketCtrl.learnerGet)
 );
 
+router.post(
+  "/tickets/:ticketId/messages",
+  verifyToken,
+  asyncHandler(ticketCtrl.learnerReply)
+);
+
 export default router;

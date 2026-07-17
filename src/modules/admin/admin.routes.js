@@ -169,4 +169,11 @@ router.patch(
   asyncHandler(ticketCtrl.adminUpdate)
 );
 
+router.post(
+  "/tickets/:ticketId/messages",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminReply)
+);
+
 export default router;
