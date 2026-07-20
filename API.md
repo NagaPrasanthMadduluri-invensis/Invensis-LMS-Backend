@@ -1181,7 +1181,8 @@ Submit a survey response. The caller must be an active participant in the survey
 
 - **Auth:** Bearer access token
 - **Body:** `{ "answers": { "q1": 5, "q2": "Great course" } }` — non-empty `{ questionId: answer }` map.
-- **`201` response:** `{ "id", "survey_id", "submitted_at" }`
+- **`201` response:** `{ "id", "survey_id", "submitted_at", "certificate_issued": false }`
+- **Certificate gating:** for a **`post_training`** survey, submitting it **issues the training certificate** — but only if the enrolment/training is already `completed` (then `certificate_issued: true`). If not yet completed, the response is recorded (`certificate_issued: false`) and the certificate is issued automatically when an admin later marks the enrolment completed. After issuance, `certificate_issued`/`certificate_id` on `GET /api/learner/trainings` reflect it, and `GET /api/learner/certificates/:ref` returns the printable data.
 - **Errors:** `422` empty/invalid answers · `404` survey not found · `403` not enrolled in the survey's training · `409` already submitted
 
 ---

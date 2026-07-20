@@ -1,5 +1,9 @@
-import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import {
+  issueCertificate,
+  generateCertificateCode,
+  activityCodeFor,
+} from "../../lib/certificates.js";
 import { db } from "../../config/db.js";
 import {
   schedules,
@@ -510,22 +514,6 @@ export async function getDashboard(userId) {
 
 // Stable, human-looking certificate code derived from the enrolment id, e.g.
 // "INVLJA4184" — deterministic so it never changes for a given enrolment.
-function generateCertificateCode(enrolmentId) {
-  const n = parseInt(createHash("sha1").update(enrolmentId).digest("hex").slice(0, 12), 16);
-  const L = "ABCDEFGHIJKLMNPQRSTUVWXYZ"; // drop 'O' to avoid 0/O confusion
-  const l1 = L[n % L.length];
-  const l2 = L[Math.floor(n / L.length) % L.length];
-  const digits = String(n % 10000).padStart(4, "0");
-  return `INVL${l1}${l2}${digits}`;
-}
-
-// The Activity ID printed on the certificate is the linked schedule's event
-// code (e.g. "INL000099"); manually-created trainings have no schedule, so we
-// fall back to the training code.
-function activityCodeFor(eventCode, trainingCode) {
-  return eventCode ?? trainingCode;
-}
-
 // Find the caller's eligible (completed) enrolment for a training ref (UUID or
 // code), joined with the training, its schedule and any issued certificate.
 // Returns null when the caller has no such eligible enrolment.
@@ -743,9 +731,15 @@ export async function submitSurveyResponse(userId, surveyId, answers, ip) {
 
     // Caller must be an active participant in this survey's training.
     const [enrolled] = await tx
-      .select({ participantId: participants.id })
+      .select({
+        participantId: participants.id,
+        enrolmentId: enrolments.id,
+        enrolmentStatus: enrolments.status,
+        trainingStatus: trainingIds.status,
+      })
       .from(enrolments)
       .innerJoin(participants, eq(enrolments.participantId, participants.id))
+      .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
       .where(
         and(
           eq(enrolments.trainingId, survey.trainingId),
@@ -772,7 +766,28 @@ export async function submitSurveyResponse(userId, surveyId, answers, ip) {
       ipAddress: ip,
     });
 
-    return { id: inserted[0].id, survey_id: surveyId, submitted_at: inserted[0].submittedAt };
+    // A post-training survey unlocks the certificate — but only once the
+    // enrolment/training is completed (certificate eligibility). If not yet
+    // completed, the response is recorded and the certificate is issued later,
+    // at completion (see admin completeEnrolment).
+    const eligible =
+      enrolled.enrolmentStatus === "completed" || enrolled.trainingStatus === "completed";
+    let certificateIssued = false;
+    if (survey.type === "post_training" && eligible) {
+      await issueCertificate(tx, {
+        enrolmentId: enrolled.enrolmentId,
+        trainingId: survey.trainingId,
+        surveyResponses: answers,
+      });
+      certificateIssued = true;
+    }
+
+    return {
+      id: inserted[0].id,
+      survey_id: surveyId,
+      submitted_at: inserted[0].submittedAt,
+      certificate_issued: certificateIssued,
+    };
   });
 }
 

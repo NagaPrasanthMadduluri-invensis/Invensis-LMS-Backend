@@ -18,6 +18,7 @@ import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { hashPassword } from "../../lib/password.js";
 import { provisionAccountSetup } from "../../lib/account-setup.js";
+import { issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
@@ -1090,6 +1091,28 @@ export async function completeEnrolment(adminId, enrolmentId, ip) {
       ipAddress: ip,
     });
 
+    // If the learner already submitted the post-training survey, issue the
+    // certificate now (it was gated on completion).
+    const [resp] = await tx
+      .select({ answers: surveyResponses.answers })
+      .from(surveyResponses)
+      .innerJoin(surveys, eq(surveyResponses.surveyId, surveys.id))
+      .where(
+        and(
+          eq(surveys.trainingId, e.trainingId),
+          eq(surveys.type, "post_training"),
+          eq(surveyResponses.participantId, e.participantId)
+        )
+      )
+      .limit(1);
+    if (resp) {
+      await issueCertificate(tx, {
+        enrolmentId: e.id,
+        trainingId: e.trainingId,
+        surveyResponses: resp.answers,
+      });
+    }
+
     return { id: enrolmentId, status: "completed" };
   });
 }
@@ -1106,7 +1129,7 @@ export async function completeAllEnrolments(adminId, trainingRef, ip) {
       .update(enrolments)
       .set({ status: "completed", updatedAt: new Date() })
       .where(and(eq(enrolments.trainingId, training.id), eq(enrolments.status, "confirmed")))
-      .returning({ id: enrolments.id });
+      .returning({ id: enrolments.id, participantId: enrolments.participantId });
 
     if (updated.length > 0) {
       await writeAudit(tx, {
@@ -1117,6 +1140,20 @@ export async function completeAllEnrolments(adminId, trainingRef, ip) {
         after: { training_code: training.code, completed: updated.length },
         ipAddress: ip,
       });
+
+      // Issue certificates for those who already submitted the post-training survey.
+      const responded = await tx
+        .select({ participantId: surveyResponses.participantId, answers: surveyResponses.answers })
+        .from(surveyResponses)
+        .innerJoin(surveys, eq(surveyResponses.surveyId, surveys.id))
+        .where(and(eq(surveys.trainingId, training.id), eq(surveys.type, "post_training")));
+      const answersByParticipant = new Map(responded.map((r) => [r.participantId, r.answers]));
+      for (const u of updated) {
+        const answers = answersByParticipant.get(u.participantId);
+        if (answers) {
+          await issueCertificate(tx, { enrolmentId: u.id, trainingId: training.id, surveyResponses: answers });
+        }
+      }
     }
 
     return { training_id: training.code, completed: updated.length };
