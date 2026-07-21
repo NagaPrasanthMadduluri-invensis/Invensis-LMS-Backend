@@ -41,4 +41,19 @@ router.put(
   asyncHandler(ctrl.markSessionAttendance)
 );
 
+// Feedback module — post-training survey results for the trainer's trainings.
+router.get(
+  "/feedback",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.listFeedback)
+);
+
+router.get(
+  "/trainings/:trainingRef/feedback",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.getTrainingFeedback)
+);
+
 export default router;

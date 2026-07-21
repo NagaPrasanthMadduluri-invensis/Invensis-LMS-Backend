@@ -328,7 +328,7 @@ The authenticated user's **"My Courses"** list — every training they're enroll
     ]
   }
   ```
-  Ordered by most recently enrolled. `meeting_released` tells the UI whether the meeting link is available yet; fetch the full detail (incl. the link, sessions, trainer) via §3.1.1.
+  Ordered by **training start date (ascending)**; trainings without a schedule sort last. `meeting_released` tells the UI whether the meeting link is available yet; fetch the full detail (incl. the link, sessions, trainer) via §3.1.1.
 - **Errors:** `401` no/invalid token
 
 ### 3.1.1 `GET /api/learner/training/:trainingRef`
@@ -939,6 +939,40 @@ Lets the **assigned trainer** set/update a session's planned topics. Use the `se
   ```
 - **Errors:** `403` not a trainer / not assigned to this training · `404` session not found · `422` empty body
 
+### 3.3.4 `GET /api/trainer/feedback`
+
+The trainer's **Feedback** module — one row per assigned training with its post-training feedback summary. Trainings are ordered by code.
+
+- **Auth:** Bearer access token · role `trainer`
+- **`200` response:**
+  ```json
+  {
+    "trainings": [
+      { "id": "…", "code": "TRN-2026-0001", "title": "PMP Certification Training", "response_count": 12, "avg_trainer_rating": 4.6 }
+    ]
+  }
+  ```
+  `avg_trainer_rating` is `null` when there are no responses yet.
+
+### 3.3.5 `GET /api/trainer/trainings/:trainingRef/feedback`
+
+Per-training feedback detail: averages + the **individual responses, anonymised** (no participant name/email is exposed to the trainer). Must be the assigned trainer. `:trainingRef` = UUID or code.
+
+- **Auth:** Bearer access token · role `trainer` (+ assigned)
+- **`200` response:**
+  ```json
+  {
+    "training_id": "TRN-2026-0001",
+    "title": "PMP Certification Training",
+    "response_count": 12,
+    "averages": { "trainer_rating": 4.6, "overall_rating": 4.4, "content_rating": 4.5, "would_recommend_pct": 92 },
+    "responses": [
+      { "overall_rating": 4, "trainer_rating": 5, "content_rating": 5, "would_recommend": true, "comments": "Great pace", "submitted_at": "…" }
+    ]
+  }
+  ```
+- **Errors:** `403` not a trainer / not assigned · `404` training not found
+
 ### 3.4 `POST /api/orders`
 
 Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, sessions, participants, and enrolments.
@@ -953,6 +987,7 @@ Ingest a **confirmed CRM order** → creates/links the schedule, Training ID, se
   - `buyer` (**required**) — the order's **sponsor**; needs `email` (plus optional `first_name`/`last_name`/`name`/`phone`/`company_name`). Missing/invalid → `422`.
   - `learners[]` (**optional**) — each requires `email` (plus optional name/phone). May be omitted or empty when an order is placed before learners are assigned; the schedule, Training ID, sessions, order record, and sponsor link are still created (with **zero enrolments**), and learners can be added later.
   - `schedule` — `schedule_id`, `start_date`, `end_date`, `start_time`, `end_time`, `session_dates[]` (plus optional `batch_type`, `delivery_format`, `venue`, `timezone`, …)
+  - **Billing address:** read from `payment.records[*].gateway_response.customer_details.address` (Stripe), falling back to `customer.billing`. Stamped onto **every participant** (`city/state/country/postal_code/address_line1/address_line2`) and onto the **sponsor's profile** (`user_profiles`).
   - Extra fields are accepted and stored for traceability.
 - **Signing example (Node):**
   ```js

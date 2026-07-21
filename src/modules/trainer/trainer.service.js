@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -9,6 +9,8 @@ import {
   enrolments,
   participants,
   attendanceRecords,
+  surveys,
+  surveyResponses,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -75,7 +77,7 @@ export async function listMyTrainings(userId) {
     .innerJoin(trainingIds, eq(trainerAssignments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .where(and(eq(trainerAssignments.trainerId, trainerId), isNull(trainerAssignments.removedAt)))
-    .orderBy(desc(trainerAssignments.assignedAt));
+    .orderBy(asc(schedules.startDate), desc(trainerAssignments.assignedAt)); // by training date, ascending (nulls last)
 
   return {
     trainings: rows.map((r) => ({
@@ -362,4 +364,101 @@ export async function markSessionAttendance(userId, sessionId, records, ip) {
       records: recs.map((r) => ({ participant_id: r.participantId, status: r.status })),
     };
   });
+}
+
+/* ─────────────────────────────────────────────────────────
+   Feedback — post-training survey results for the trainer's own trainings.
+   Averages + anonymous individual entries (no participant identity).
+   ───────────────────────────────────────────────────────── */
+
+const avg = (nums) =>
+  nums.length ? Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 100) / 100 : null;
+const numeric = (answers, key) => avg(answers.map((a) => a?.[key]).filter((v) => typeof v === "number"));
+
+// One row per assigned training: response count + average trainer rating.
+export async function listFeedback(userId) {
+  const trainerId = await trainerIdForUser(userId);
+  if (!trainerId) return { trainings: [] };
+
+  const trainings = await db
+    .select({ id: trainingIds.id, code: trainingIds.code, title: trainingIds.title })
+    .from(trainerAssignments)
+    .innerJoin(trainingIds, eq(trainerAssignments.trainingId, trainingIds.id))
+    .where(and(eq(trainerAssignments.trainerId, trainerId), isNull(trainerAssignments.removedAt)))
+    .orderBy(asc(trainingIds.code));
+  if (trainings.length === 0) return { trainings: [] };
+
+  const responses = await db
+    .select({ trainingId: surveys.trainingId, answers: surveyResponses.answers })
+    .from(surveyResponses)
+    .innerJoin(surveys, eq(surveyResponses.surveyId, surveys.id))
+    .where(
+      and(
+        inArray(surveys.trainingId, trainings.map((t) => t.id)),
+        eq(surveys.type, "post_training")
+      )
+    );
+
+  const byTraining = new Map();
+  for (const r of responses) {
+    if (!byTraining.has(r.trainingId)) byTraining.set(r.trainingId, []);
+    byTraining.get(r.trainingId).push(r.answers);
+  }
+
+  return {
+    trainings: trainings.map((t) => {
+      const ans = byTraining.get(t.id) ?? [];
+      return {
+        id: t.id,
+        code: t.code,
+        title: t.title,
+        response_count: ans.length,
+        avg_trainer_rating: numeric(ans, "trainer_rating"),
+      };
+    }),
+  };
+}
+
+// Per-training feedback detail: averages + anonymous individual entries.
+export async function getTrainingFeedback(userId, trainingRef) {
+  const [training] = await db
+    .select()
+    .from(trainingIds)
+    .where(UUID_RE.test(trainingRef) ? eq(trainingIds.id, trainingRef) : eq(trainingIds.code, trainingRef))
+    .limit(1);
+  if (!training) throw new AppError("Training not found", 404);
+  await assertAssigned(db, userId, training.id);
+
+  const rows = await db
+    .select({ answers: surveyResponses.answers, submittedAt: surveyResponses.submittedAt })
+    .from(surveyResponses)
+    .innerJoin(surveys, eq(surveyResponses.surveyId, surveys.id))
+    .where(and(eq(surveys.trainingId, training.id), eq(surveys.type, "post_training")))
+    .orderBy(desc(surveyResponses.submittedAt));
+
+  const answers = rows.map((r) => r.answers);
+  const recommend = answers.map((a) => a?.would_recommend).filter((v) => typeof v === "boolean");
+
+  return {
+    training_id: training.code,
+    title: training.title,
+    response_count: answers.length,
+    averages: {
+      trainer_rating: numeric(answers, "trainer_rating"),
+      overall_rating: numeric(answers, "overall_rating"),
+      content_rating: numeric(answers, "content_rating"),
+      would_recommend_pct: recommend.length
+        ? Math.round((recommend.filter(Boolean).length / recommend.length) * 100)
+        : null,
+    },
+    // Anonymous — no participant identity is exposed to the trainer.
+    responses: rows.map((r) => ({
+      overall_rating: r.answers?.overall_rating ?? null,
+      trainer_rating: r.answers?.trainer_rating ?? null,
+      content_rating: r.answers?.content_rating ?? null,
+      would_recommend: typeof r.answers?.would_recommend === "boolean" ? r.answers.would_recommend : null,
+      comments: r.answers?.comments ?? null,
+      submitted_at: r.submittedAt,
+    })),
+  };
 }

@@ -209,7 +209,7 @@ export async function listTrainings() {
     )
     .leftJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
     .leftJoin(users, eq(trainers.userId, users.id))
-    .orderBy(desc(trainingIds.createdAt));
+    .orderBy(asc(schedules.startDate), desc(trainingIds.createdAt)); // by training date, ascending (nulls last)
 
   return {
     trainings: rows.map((r) => ({

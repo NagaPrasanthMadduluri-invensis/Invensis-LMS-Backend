@@ -30,3 +30,11 @@ export async function markSessionAttendance(req, res) {
     await trainerService.markSessionAttendance(req.user.user_id, req.params.sessionId, records, req.ip)
   );
 }
+
+export async function listFeedback(req, res) {
+  res.json(await trainerService.listFeedback(req.user.user_id));
+}
+
+export async function getTrainingFeedback(req, res) {
+  res.json(await trainerService.getTrainingFeedback(req.user.user_id, req.params.trainingRef));
+}

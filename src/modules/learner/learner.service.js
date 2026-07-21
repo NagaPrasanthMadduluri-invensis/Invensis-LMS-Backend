@@ -103,7 +103,7 @@ export async function listMyTrainings(userId) {
         notInArray(enrolments.status, ["cancelled", "transferred"])
       )
     )
-    .orderBy(desc(enrolments.enrolledAt));
+    .orderBy(asc(schedules.startDate), desc(enrolments.enrolledAt)); // by training date, ascending (nulls last)
 
   return {
     trainings: rows.map((r) => ({
