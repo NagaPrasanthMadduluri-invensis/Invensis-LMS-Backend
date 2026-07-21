@@ -56,6 +56,12 @@ export const userProfiles = pgTable("user_profiles", {
   lastName: text("last_name"),
   phone: text("phone"),
   country: text("country"),
+  // Billing address (populated for sponsors from the order's Stripe response).
+  city: text("city"),
+  state: text("state"),
+  postalCode: text("postal_code"),
+  addressLine1: text("address_line1"),
+  addressLine2: text("address_line2"),
   timeZone: text("time_zone"),
   preferredLanguage: text("preferred_language"),
   companyName: text("company_name"),
@@ -229,6 +235,11 @@ export const participants = pgTable("participants", {
   // a billing city/country) — this is what geo analytics keys off, not the venue.
   city: text("city"),
   country: text("country"),
+  // Billing address from the order's payment gateway (Stripe) response.
+  state: text("state"),
+  postalCode: text("postal_code"),
+  addressLine1: text("address_line1"),
+  addressLine2: text("address_line2"),
   // Learner profile attributes — mirror the fields a learner fills in their
   // profile (user_profiles) / that arrive on the xCRM customer. Drive the
   // learner-demographic analytics. (job_title already above.)

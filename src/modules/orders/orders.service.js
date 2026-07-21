@@ -9,6 +9,7 @@ import {
   enrolments,
   orders,
   users,
+  userProfiles,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -30,6 +31,37 @@ const BUCKET = {
   one_to_one: "one_to_one_coaching",
   one_to_one_coaching: "one_to_one_coaching",
 };
+
+// Billing address from the order. Prefer the payment gateway (Stripe) response
+// — the CRM's customer.billing block is often empty — falling back to it.
+// Returns the camelCase column set, or null when no address is present.
+function extractBillingAddress(payload) {
+  const stripe = payload.payment?.records?.find(
+    (r) => r?.gateway_response?.customer_details?.address
+  )?.gateway_response?.customer_details?.address;
+  if (stripe) {
+    return {
+      city: stripe.city ?? null,
+      state: stripe.state ?? null,
+      country: stripe.country ?? null,
+      postalCode: stripe.postal_code ?? null,
+      addressLine1: stripe.line1 ?? null,
+      addressLine2: stripe.line2 ?? null,
+    };
+  }
+  const b = payload.customer?.billing;
+  if (b && (b.city || b.state || b.country || b.postal_code || b.address_line1 || b.address_line2)) {
+    return {
+      city: b.city ?? null,
+      state: b.state ?? null,
+      country: b.country ?? null,
+      postalCode: b.postal_code ?? null,
+      addressLine1: b.address_line1 ?? null,
+      addressLine2: b.address_line2 ?? null,
+    };
+  }
+  return null;
+}
 
 const mapDeliveryMode = (f) => DELIVERY_MODE[f] ?? "virtual";
 const mapBucket = (p) => BUCKET[p] ?? "direct_online";
@@ -58,6 +90,7 @@ export async function ingestOrder(actorId, payload, ip) {
   const sch = payload.schedule;
   const scheduleCode = sch.schedule_id;
   const learners = payload.learners ?? []; // optional — order may precede learner assignment
+  const billing = extractBillingAddress(payload); // buyer's billing address (Stripe / CRM)
 
   // Users created here start with no password; after commit we email each a
   // setup link so they can set one. Collected inside the tx, sent after.
@@ -203,6 +236,14 @@ export async function ingestOrder(actorId, payload, ip) {
           .where(eq(participants.id, participant.id));
       }
 
+      // Stamp the order's billing address on the participant.
+      if (billing) {
+        await tx
+          .update(participants)
+          .set({ ...billing, updatedAt: new Date() })
+          .where(eq(participants.id, participant.id));
+      }
+
       const inserted = await tx
         .insert(enrolments)
         .values({
@@ -235,6 +276,18 @@ export async function ingestOrder(actorId, payload, ip) {
           .values({ email: buyer.email, name: buyerName, role: "sponsor" })
           .returning({ id: users.id });
         toProvision.push({ id: sponsorUser.id, name: buyerName, email: buyer.email });
+      }
+
+      // Store the billing address on the sponsor's profile (upsert; the profile
+      // row may not exist yet for a freshly-created sponsor).
+      if (billing) {
+        await tx
+          .insert(userProfiles)
+          .values({ userId: sponsorUser.id, ...billing })
+          .onConflictDoUpdate({
+            target: userProfiles.userId,
+            set: { ...billing, updatedAt: new Date() },
+          });
       }
 
       await tx
