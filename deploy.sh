@@ -48,12 +48,12 @@ echo "✓ no un-ledgered objects"
 npm run db:migrate                       # applies pending migrations
 
 # Clean single-instance restart — kills the two-daemon / orphan port conflict
-pm2 delete lms_backend 2>/dev/null || true
-sudo -u ubuntu pm2 delete lms_backend 2>/dev/null || true
+pm2 delete learning_portal_api 2>/dev/null || true
+sudo -u ubuntu pm2 delete learning_portal_api 2>/dev/null || true
 sudo fuser -k 5000/tcp 2>/dev/null || true
-pm2 start src/index.js --name lms_backend --update-env
+pm2 start src/index.js --name learning_portal_api --update-env
 pm2 save
 
 sleep 3
-pm2 logs lms_backend --lines 15 --nostream                          # snapshot, doesn't block
+pm2 logs learning_portal_api --lines 15 --nostream                          # snapshot, doesn't block
 curl -s -o /dev/null -w 'health:%{http_code}\n' localhost:5000/api/health   # expect health:200
