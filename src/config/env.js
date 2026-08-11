@@ -39,7 +39,7 @@ const schema = z.object({
   SETUP_TOKEN_TTL_HOURS: z.coerce.number().int().positive().default(72),
   // SMTP (Nodemailer). If SMTP_HOST is unset the mailer falls back to logging
   // the email to the console — dev/CI works without real credentials.
-  MAIL_FROM: z.string().default("Invensis LMS <no-reply@invensis.net>"),
+  MAIL_FROM: z.string().default("Invensis Learning Portal <no-reply@invensis.net>"),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   SMTP_USER: z.string().optional(),

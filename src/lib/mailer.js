@@ -53,15 +53,15 @@ function layout(heading, greeting, body, buttonLabel, link) {
 }
 
 export async function sendAccountSetupEmail(user, link) {
-  const subject = "Set up your Invensis LMS account";
+  const subject = "Set up your Invensis Learning Portal account";
   const text =
     `Hi ${user.name},\n\n` +
-    `An account has been created for you on Invensis LMS. ` +
+    `An account has been created for you on Invensis Learning Portal. ` +
     `Set your password to activate it (link valid ${env.SETUP_TOKEN_TTL_HOURS} hours):\n\n` +
     `${link}\n\n` +
     `If you weren't expecting this, you can safely ignore this email.`;
   const html = layout(
-    "Welcome to Invensis LMS",
+    "Welcome to Invensis Learning Portal",
     `Hi ${user.name},`,
     "An account has been created for you. Set your password to activate it.",
     "Set your password",
@@ -71,7 +71,7 @@ export async function sendAccountSetupEmail(user, link) {
 }
 
 export async function sendPasswordResetEmail(user, link) {
-  const subject = "Reset your Invensis LMS password";
+  const subject = "Reset your Invensis Learning Portal password";
   const text =
     `Hi ${user.name},\n\n` +
     `We received a request to reset your password. ` +
