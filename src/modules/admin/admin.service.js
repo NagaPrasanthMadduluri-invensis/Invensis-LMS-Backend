@@ -10,6 +10,7 @@ import {
   participants,
   certificates,
   users,
+  userProfiles,
   surveys,
   surveyResponses,
   attendanceRecords,
@@ -917,9 +918,14 @@ export async function getParticipantDetail(participantId) {
       createdAt: participants.createdAt,
       accountActive: users.isActive,
       hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
+      companyName: userProfiles.companyName,
+      department: userProfiles.department,
+      yearsExperience: userProfiles.yearsExperience,
+      linkedinUrl: userProfiles.linkedinUrl,
     })
     .from(participants)
     .leftJoin(users, eq(participants.userId, users.id))
+    .leftJoin(userProfiles, eq(participants.userId, userProfiles.userId))
     .where(eq(participants.id, participantId))
     .limit(1);
 
@@ -981,6 +987,10 @@ export async function getParticipantDetail(participantId) {
       city: p.city,
       country: p.country,
       location: [p.city, p.country].filter(Boolean).join(", ") || null,
+      company_name: p.companyName ?? null,
+      department: p.department ?? null,
+      years_experience: p.yearsExperience ?? null,
+      linkedin_url: p.linkedinUrl ?? null,
       account_active: p.accountActive ?? false,
       has_password: p.hasPassword ?? false,
       created_at: p.createdAt,
