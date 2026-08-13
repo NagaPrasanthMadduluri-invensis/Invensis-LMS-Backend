@@ -6,6 +6,28 @@ import { asyncHandler } from "../../lib/async-handler.js";
 
 const router = Router();
 
+// ── Self-service profile ──
+router.get(
+  "/profile",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.getMyProfile)
+);
+
+router.patch(
+  "/profile",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.updateMyProfile)
+);
+
+router.post(
+  "/profile/resume-upload-url",
+  verifyToken,
+  requireRole("trainer"),
+  asyncHandler(ctrl.resumeUploadUrl)
+);
+
 router.get(
   "/trainings",
   verifyToken,

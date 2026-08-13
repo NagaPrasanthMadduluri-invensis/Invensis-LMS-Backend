@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
@@ -11,10 +12,12 @@ import {
   attendanceRecords,
   surveys,
   surveyResponses,
+  users,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
+import { storageConfigured, presignPut, presignGet } from "../../lib/storage.js";
 
 // Assert the JWT user is the trainer currently assigned to `trainingId`.
 // Returns the trainer id; throws 403 otherwise. `runner` is a db or tx handle.
@@ -460,5 +463,122 @@ export async function getTrainingFeedback(userId, trainingRef) {
       comments: r.answers?.comments ?? null,
       submitted_at: r.submittedAt,
     })),
+  };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Trainer self-service profile (GET / PATCH / resume upload)
+   ───────────────────────────────────────────────────────── */
+
+function formatTrainerLocation({ city, country, isRemote }) {
+  const place = [city, country].filter(Boolean).join(", ");
+  if (isRemote) return place ? `${place} · Remote` : "Remote";
+  return place || null;
+}
+
+// Shape the trainer's own profile for the trainer portal. `resume_url` is a
+// short-lived presigned GET URL (null when no resume or storage unconfigured).
+async function publicTrainerProfile(t, u) {
+  return {
+    id: t.id,
+    user_id: t.userId,
+    name: u.name,
+    email: u.email,
+    bio: t.bio,
+    experience: t.experience,
+    rate: t.rate,
+    certificates: t.certificates ?? [],
+    specializations: t.specializations ?? [],
+    city: t.city ?? null,
+    country: t.country ?? null,
+    is_remote: t.isRemote ?? false,
+    location: formatTrainerLocation({ city: t.city, country: t.country, isRemote: t.isRemote }),
+    resume_key: t.resumeKey ?? null,
+    resume_url: t.resumeKey ? await presignGet(t.resumeKey) : null,
+    is_active: t.isActive,
+  };
+}
+
+async function loadOwnTrainer(runner, userId) {
+  const [row] = await runner
+    .select({ t: trainers, u: users })
+    .from(trainers)
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(eq(trainers.userId, userId))
+    .limit(1);
+  if (!row) throw new AppError("Trainer profile not found", 404);
+  return row;
+}
+
+export async function getMyProfile(userId) {
+  const row = await loadOwnTrainer(db, userId);
+  return { trainer: await publicTrainerProfile(row.t, row.u) };
+}
+
+export async function updateMyProfile(userId, body, ip) {
+  const trainer = await db.transaction(async (tx) => {
+    const { t, u } = await loadOwnTrainer(tx, userId);
+
+    const before = {
+      bio: t.bio,
+      experience: t.experience,
+      certificates: t.certificates,
+      specializations: t.specializations,
+      city: t.city,
+      country: t.country,
+      is_remote: t.isRemote,
+      resume_key: t.resumeKey,
+    };
+
+    const set = { updatedAt: new Date() };
+    if (body.bio !== undefined) set.bio = body.bio;
+    if (body.experience !== undefined) set.experience = body.experience;
+    if (body.certificates !== undefined) set.certificates = body.certificates;
+    if (body.specializations !== undefined) set.specializations = body.specializations;
+    if (body.city !== undefined) set.city = body.city;
+    if (body.country !== undefined) set.country = body.country;
+    if (body.is_remote !== undefined) set.isRemote = body.is_remote;
+    if (body.resume_key !== undefined) set.resumeKey = body.resume_key;
+    await tx.update(trainers).set(set).where(eq(trainers.id, t.id));
+
+    // Display name lives on the user account.
+    if (body.name !== undefined) {
+      await tx.update(users).set({ name: body.name, updatedAt: new Date() }).where(eq(users.id, u.id));
+    }
+
+    await writeAudit(tx, {
+      entityType: "trainer",
+      entityId: t.id,
+      action: "trainer_self_updated",
+      actorId: u.id,
+      before,
+      after: { ...set, ...(body.name !== undefined ? { name: body.name } : {}) },
+      ipAddress: ip,
+    });
+
+    return loadOwnTrainer(tx, userId);
+  });
+
+  return { trainer: await publicTrainerProfile(trainer.t, trainer.u) };
+}
+
+// Presigned PUT for a resume PDF, straight to R2 (the API never sees the bytes).
+// Size is capped on the client (see RESUME_MAX_BYTES there); we pin the object
+// key + content type here.
+export async function createResumeUploadUrl(userId, contentType) {
+  if (!storageConfigured()) {
+    throw new AppError("File storage is not configured", 503);
+  }
+  // Ensure the caller actually has a trainer profile before minting a URL.
+  const { t } = await loadOwnTrainer(db, userId);
+  const key = `resumes/${t.id}/${randomUUID()}.pdf`;
+  const uploadUrl = await presignPut(key, contentType);
+  return {
+    upload_url: uploadUrl,
+    resume_key: key,
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    expires_in: 300,
+    // After a successful PUT, PATCH /trainer/profile with { "resume_key": <this> }.
   };
 }

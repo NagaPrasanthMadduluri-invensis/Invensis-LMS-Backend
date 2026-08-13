@@ -1,5 +1,24 @@
-import { updateTopicsSchema, markAttendanceSchema } from "./trainer.schema.js";
+import {
+  updateTopicsSchema,
+  markAttendanceSchema,
+  updateTrainerProfileSchema,
+  resumeUploadSchema,
+} from "./trainer.schema.js";
 import * as trainerService from "./trainer.service.js";
+
+export async function getMyProfile(req, res) {
+  res.json(await trainerService.getMyProfile(req.user.user_id));
+}
+
+export async function updateMyProfile(req, res) {
+  const body = updateTrainerProfileSchema.parse(req.body);
+  res.json(await trainerService.updateMyProfile(req.user.user_id, body, req.ip));
+}
+
+export async function resumeUploadUrl(req, res) {
+  const { content_type } = resumeUploadSchema.parse(req.body);
+  res.json(await trainerService.createResumeUploadUrl(req.user.user_id, content_type));
+}
 
 export async function listMyTrainings(req, res) {
   res.json(await trainerService.listMyTrainings(req.user.user_id));

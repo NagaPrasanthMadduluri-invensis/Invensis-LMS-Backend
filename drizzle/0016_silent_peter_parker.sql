@@ -1,0 +1,1 @@
+ALTER TABLE "trainers" ADD COLUMN "resume_key" text;

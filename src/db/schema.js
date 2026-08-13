@@ -207,6 +207,8 @@ export const trainers = pgTable("trainers", {
   city: text("city"),
   country: text("country"),
   isRemote: boolean("is_remote").notNull().default(false),
+  // Uploaded resume/CV — R2 object key (private). Read via a presigned GET URL.
+  resumeKey: text("resume_key"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
