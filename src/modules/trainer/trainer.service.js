@@ -171,7 +171,7 @@ export async function getTrainingDetail(userId, trainingRef) {
     .where(eq(enrolments.trainingId, training.id))
     .orderBy(asc(participants.name));
 
-  return {
+  const response = {
     id: training.id,
     training_id: training.code,
     title: training.title,
@@ -200,6 +200,14 @@ export async function getTrainingDetail(userId, trainingRef) {
       enrolled_at: p.enrolledAt,
     })),
   };
+
+  // Meeting link — surfaced to the assigned trainer only once the admin has
+  // released it, exactly as it is to enrolled learners (learner.service.js).
+  if (training.meetingReleased && training.meetingUrl) {
+    response.meeting = { url: training.meetingUrl, platform: training.meetingPlatform };
+  }
+
+  return response;
 }
 
 export async function updateSessionTopics(userId, sessionId, plannedTopics, ip) {
