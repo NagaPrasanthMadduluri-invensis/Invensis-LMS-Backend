@@ -14,6 +14,7 @@ import {
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { provisionAccountSetup } from "../../lib/account-setup.js";
+import { resolveCourseFacts } from "../cms/cms.service.js";
 
 const DELIVERY_MODE = {
   live_virtual: "virtual",
@@ -92,6 +93,11 @@ export async function ingestOrder(actorId, payload, ip) {
   const learners = payload.learners ?? []; // optional — order may precede learner assignment
   const billing = extractBillingAddress(payload); // buyer's billing address (Stripe / CRM)
 
+  // Resolve CMS course facts (course_type / certification_included) by slug BEFORE
+  // opening the transaction, so a slow/down CMS never holds a DB lock or fails the
+  // order. Best-effort: falls back to nulls/false when the CMS can't be reached.
+  const courseFacts = await resolveCourseFacts(payload.course?.slug);
+
   // Users created here start with no password; after commit we email each a
   // setup link so they can set one. Collected inside the tx, sent after.
   const toProvision = [];
@@ -119,6 +125,7 @@ export async function ingestOrder(actorId, payload, ip) {
           deliveryMode: mapDeliveryMode(sch.delivery_format),
           batchType: mapBatchType(sch.batch_type),
           durationHours: sch.duration_hours ?? payload.course?.duration_hours ?? null,
+          hoursPerDay: sch.hours_per_day != null ? Number(sch.hours_per_day) : null,
           capacity: env.SCHEDULE_DEFAULT_CAPACITY,
           minSeats: env.SCHEDULE_DEFAULT_MIN_SEATS,
           startDate: sch.start_date,
@@ -127,7 +134,7 @@ export async function ingestOrder(actorId, payload, ip) {
           endTime: sch.end_time,
           sessionDates: sch.session_dates,
           venue: sch.venue ?? null,
-          timezone: sch.timezone ?? null,
+          timezone: sch.timezone ?? sch.timezone_code ?? null,
           createdBy: actorId,
         })
         .returning();
@@ -154,6 +161,9 @@ export async function ingestOrder(actorId, payload, ip) {
           status: "active",
           capacity: schedule.capacity,
           minSeats: schedule.minSeats,
+          courseSlug: courseFacts.course_slug,
+          courseType: courseFacts.course_type,
+          certificationIncluded: courseFacts.certification_included,
           createdBy: actorId,
         })
         .returning();

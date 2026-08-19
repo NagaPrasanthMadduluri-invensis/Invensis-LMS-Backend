@@ -1,0 +1,1 @@
+ALTER TABLE "schedules" ADD COLUMN "hours_per_day" integer;

@@ -5,6 +5,11 @@ export async function getDashboard(req, res) {
   res.json(await learnerService.getDashboard(req.user.user_id));
 }
 
+export async function getUpcomingCohorts(req, res) {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 3, 1), 12);
+  res.json(await learnerService.getUpcomingCohorts(req.user.user_id, { limit }));
+}
+
 export async function listMyTrainings(req, res) {
   res.json(await learnerService.listMyTrainings(req.user.user_id));
 }

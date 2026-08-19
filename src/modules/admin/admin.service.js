@@ -245,6 +245,7 @@ export async function getTrainingDetail(trainingRef) {
     [schedule] = await db
       .select({
         durationHours: schedules.durationHours,
+        hoursPerDay: schedules.hoursPerDay,
         capacity: schedules.capacity,
         minSeats: schedules.minSeats,
         batchType: schedules.batchType,
@@ -317,10 +318,14 @@ export async function getTrainingDetail(trainingRef) {
     delivery_mode: training.deliveryMode,
     bucket: training.bucket,
     status: training.status,
+    course_slug: training.courseSlug ?? null,
+    course_type: training.courseType ?? null,
+    certification_included: training.certificationIncluded ?? false,
     capacity: schedule?.capacity ?? training.capacity,
     min_seats: schedule?.minSeats ?? training.minSeats,
     enrolled_count: training.enrolledCount,
     duration_hours: schedule?.durationHours ?? null,
+    hours_per_day: schedule?.hoursPerDay ?? null,
     batch_type: schedule?.batchType ?? null,
     timezone: schedule?.timezone ?? null,
     start_date: schedule?.startDate ?? null,

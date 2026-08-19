@@ -120,6 +120,7 @@ export const schedules = pgTable(
     deliveryMode: deliveryModeEnum("delivery_mode").notNull(),
     batchType: batchTypeEnum("batch_type").notNull(),
     durationHours: integer("duration_hours"),
+    hoursPerDay: integer("hours_per_day"), // daily training hours (from the order)
     capacity: integer("capacity").notNull(),
     minSeats: integer("min_seats").notNull(),
 
@@ -166,6 +167,12 @@ export const trainingIds = pgTable(
     meetingReleased: boolean("meeting_released").notNull().default(false),
     meetingTriggeredBy: uuid("meeting_triggered_by").references(() => users.id),
     meetingTriggeredAt: timestamp("meeting_triggered_at", { withTimezone: true }),
+
+    // Course facts resolved from the CMS at order-confirm time (by course slug).
+    // Drive conditional rendering in the portals. null = not resolved yet.
+    courseSlug: text("course_slug"),
+    courseType: text("course_type"), // "certification" | "training_only"
+    certificationIncluded: boolean("certification_included"), // from CMS meta.certification_inculded
 
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

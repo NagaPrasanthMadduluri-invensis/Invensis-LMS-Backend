@@ -15,7 +15,8 @@
     "db:seed:sponsor": "node src/db/seed-sponsor.js",
     "db:seed:surveys": "node src/db/seed-surveys.js",
     "db:seed:analytics": "node src/db/seed-analytics.js",
-    "db:dedupe-emails": "node src/db/dedupe-emails.js"
+    "db:dedupe-emails": "node src/db/dedupe-emails.js",
+    "db:backfill-schedule-details": "node src/db/backfill-schedule-details.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1083.0",

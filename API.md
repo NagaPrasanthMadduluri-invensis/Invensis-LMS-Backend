@@ -882,7 +882,9 @@ Lists the trainings **currently assigned to the logged-in trainer** (derived fro
 
 Full detail for one training the trainer is assigned to, **including its sessions and the enrolled participants (roster)**. `:trainingRef` accepts the UUID or the code. Each session includes its **`id` (the `sessionId`)** — use it with `PATCH /api/trainer/sessions/:sessionId/topics` (§3.3.3).
 
-> **Roster privacy:** the `participants` array intentionally exposes **only** `name`, `job_title`, and enrolment `status` (plus stable `participant_id` / `enrolment_id` and `enrolled_at`). Trainers do **not** receive learner contact details (email/phone) or account state — that's admin-only (§3.2.11).
+> **Roster privacy:** the `participants` array exposes each learner's **professional profile** — `name`, `job_title`, `company`, `department`, `experience_years`, `city`, `country`, `location` — plus enrolment `status`, `enrolled_at`, and the stable `participant_id` / `enrolment_id`. Trainers do **not** receive learner contact details (email/phone) or account state — that's admin-only (§3.2.11).
+>
+> Profile fields are sourced from the xCRM participant record, falling back to the learner's own `user_profiles` entry when the order didn't carry them. Any of them may be `null` when neither source has a value.
 
 - **Auth:** Bearer access token · role `trainer` · must be currently assigned to this training
 - **`200` response:**
@@ -915,6 +917,12 @@ Full detail for one training the trainer is assigned to, **including its session
         "participant_id": "019ef7fe-e43a-7bb5-a70c-4339ab6b83f9",
         "name": "Learner User",
         "job_title": "Project Manager",
+        "company": "Acme Industries",
+        "department": "Engineering",
+        "experience_years": 7,
+        "city": "Bengaluru",
+        "country": "India",
+        "location": "Bengaluru, India",
         "status": "confirmed",
         "enrolled_at": "2026-06-24T04:58:57.467Z"
       }

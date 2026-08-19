@@ -15,6 +15,13 @@ router.get(
   asyncHandler(ctrl.getDashboard)
 );
 
+// Upcoming cohorts (from the CMS) for the learner's course + payment country.
+router.get(
+  "/upcoming-cohorts",
+  verifyToken,
+  asyncHandler(ctrl.getUpcomingCohorts)
+);
+
 // "My Courses" — scoped to the caller's own enrolments, so no role gate
 // (capability-based: a sponsor-role user who also attends still sees their courses).
 router.get(

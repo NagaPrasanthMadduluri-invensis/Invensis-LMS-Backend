@@ -13,6 +13,7 @@ import {
   surveys,
   surveyResponses,
   users,
+  userProfiles,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -42,6 +43,17 @@ async function assertAssigned(runner, userId, trainingId) {
     .limit(1);
   if (!assignment) throw new AppError("You are not assigned to this training", 403);
   return trainer.id;
+}
+
+// First value that is actually present (non-null, non-blank). Used to prefer the
+// xCRM-sourced participant field over the learner's self-entered profile.
+function firstFilled(...vals) {
+  for (const v of vals) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === "string" && v.trim() === "") continue;
+    return v;
+  }
+  return null;
 }
 
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
@@ -136,6 +148,8 @@ export async function getTrainingDetail(userId, trainingRef) {
         timezone: schedules.timezone,
         batchType: schedules.batchType,
         venue: schedules.venue,
+        durationHours: schedules.durationHours,
+        hoursPerDay: schedules.hoursPerDay,
       })
       .from(schedules)
       .where(eq(schedules.id, training.scheduleId))
@@ -155,19 +169,35 @@ export async function getTrainingDetail(userId, trainingRef) {
     .where(eq(trainingSessions.trainingId, training.id))
     .orderBy(trainingSessions.dayNumber);
 
-  // Roster for this training. Minimal fields only — a trainer sees who is
-  // enrolled and their status, NOT contact details (email/phone) or account state.
+  // Roster for this training. Professional profile only — a trainer sees who is
+  // enrolled, their background (company / experience / department / country) and
+  // their status, but NOT contact details (email/phone) or account state.
+  // Profile attributes have two sources: the `participants` row (from the xCRM
+  // order) and `user_profiles` (what the learner filled in themselves). Prefer
+  // the participant row and fall back to the self-entered profile.
   const roster = await db
     .select({
       enrolmentId: enrolments.id,
       participantId: participants.id,
       name: participants.name,
       jobTitle: participants.jobTitle,
+      company: participants.company,
+      department: participants.department,
+      experienceYears: participants.experienceYears,
+      city: participants.city,
+      country: participants.country,
+      profileJobTitle: userProfiles.jobTitle,
+      profileCompany: userProfiles.companyName,
+      profileDepartment: userProfiles.department,
+      profileExperienceYears: userProfiles.yearsExperience,
+      profileCity: userProfiles.city,
+      profileCountry: userProfiles.country,
       status: enrolments.status,
       enrolledAt: enrolments.enrolledAt,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .leftJoin(userProfiles, eq(participants.userId, userProfiles.userId))
     .where(eq(enrolments.trainingId, training.id))
     .orderBy(asc(participants.name));
 
@@ -178,9 +208,14 @@ export async function getTrainingDetail(userId, trainingRef) {
     delivery_mode: training.deliveryMode,
     bucket: training.bucket,
     status: training.status,
+    course_slug: training.courseSlug ?? null,
+    course_type: training.courseType ?? null,
+    certification_included: training.certificationIncluded ?? false,
     start_date: schedule?.startDate ?? null,
     end_date: schedule?.endDate ?? null,
     timezone: schedule?.timezone ?? null,
+    duration_hours: schedule?.durationHours ?? null,
+    hours_per_day: schedule?.hoursPerDay ?? null,
     batch_type: schedule?.batchType ?? null,
     venue: schedule?.venue ?? null,
     sessions: sessions.map((s) => ({
@@ -191,14 +226,24 @@ export async function getTrainingDetail(userId, trainingRef) {
       end_time: s.endTime,
       status: s.status,
     })),
-    participants: roster.map((p) => ({
-      enrolment_id: p.enrolmentId,
-      participant_id: p.participantId,
-      name: p.name,
-      job_title: p.jobTitle,
-      status: p.status,
-      enrolled_at: p.enrolledAt,
-    })),
+    participants: roster.map((p) => {
+      const city = firstFilled(p.city, p.profileCity);
+      const country = firstFilled(p.country, p.profileCountry);
+      return {
+        enrolment_id: p.enrolmentId,
+        participant_id: p.participantId,
+        name: p.name,
+        job_title: firstFilled(p.jobTitle, p.profileJobTitle),
+        company: firstFilled(p.company, p.profileCompany),
+        department: firstFilled(p.department, p.profileDepartment),
+        experience_years: firstFilled(p.experienceYears, p.profileExperienceYears),
+        city,
+        country,
+        location: [city, country].filter(Boolean).join(", ") || null,
+        status: p.status,
+        enrolled_at: p.enrolledAt,
+      };
+    }),
   };
 
   // Meeting link — surfaced to the assigned trainer only once the admin has

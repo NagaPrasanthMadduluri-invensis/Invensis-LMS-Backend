@@ -1,9 +1,11 @@
-import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, isNotNull, notInArray, sql } from "drizzle-orm";
 import {
   issueCertificate,
   generateCertificateCode,
   activityCodeFor,
 } from "../../lib/certificates.js";
+import { env } from "../../config/env.js";
+import { listSchedules } from "../cms/cms.service.js";
 import { db } from "../../config/db.js";
 import {
   schedules,
@@ -190,6 +192,7 @@ export async function getTrainingDetail(userId, trainingRef) {
     [schedule] = await db
       .select({
         durationHours: schedules.durationHours,
+        hoursPerDay: schedules.hoursPerDay,
         capacity: schedules.capacity,
         minSeats: schedules.minSeats,
         batchType: schedules.batchType,
@@ -212,8 +215,15 @@ export async function getTrainingDetail(userId, trainingRef) {
     delivery_mode: training.deliveryMode,
     bucket: training.bucket,
     status: training.status,
+    // CMS-resolved course facts (for conditional rendering). certification_included
+    // is intentionally tri-state: true / false / null (null = unresolved → the UI
+    // shows nothing).
+    course_slug: training.courseSlug ?? null,
+    course_type: training.courseType ?? null,
+    certification_included: training.certificationIncluded ?? null,
     // schedule offering fields (fall back to training-level values when no schedule is linked)
     duration_hours: schedule?.durationHours ?? null,
+    hours_per_day: schedule?.hoursPerDay ?? null,
     capacity: schedule?.capacity ?? training.capacity,
     min_seats: schedule?.minSeats ?? training.minSeats,
     enrolled_count: training.enrolledCount,
@@ -859,4 +869,54 @@ export async function listMyAttendance(userId) {
       };
     }),
   };
+}
+
+// CMS billing country → the `country` param the schedule-listing API expects
+// (lowercase ISO-3166 alpha-2). Stripe stamps ISO2 on the participant; anything
+// that isn't a 2-letter code falls back to the configured default.
+function toCmsCountry(raw) {
+  if (typeof raw === "string" && raw.trim().length === 2) return raw.trim().toLowerCase();
+  return env.CMS_DEFAULT_COUNTRY;
+}
+
+/**
+ * Upcoming cohorts for the learner's course, in the country they paid from.
+ * Resolves the course slug from their most recent enrolment (that carries one)
+ * and the billing country stamped on their participant record, then queries the
+ * CMS schedule-listing. Best-effort: a slow/down CMS yields an empty list rather
+ * than failing the dashboard.
+ */
+export async function getUpcomingCohorts(userId, { limit = 3 } = {}) {
+  const [row] = await db
+    .select({
+      courseSlug: trainingIds.courseSlug,
+      country: participants.country,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .where(and(eq(participants.userId, userId), isNotNull(trainingIds.courseSlug)))
+    .orderBy(desc(enrolments.enrolledAt))
+    .limit(1);
+
+  if (!row?.courseSlug) {
+    return { course_slug: null, country: null, cohorts: [] };
+  }
+
+  const country = toCmsCountry(row.country);
+
+  let list = [];
+  try {
+    ({ schedules: list } = await listSchedules(row.courseSlug, { country }));
+  } catch {
+    return { course_slug: row.courseSlug, country, cohorts: [] };
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const cohorts = list
+    .filter((s) => !s.start_date || s.start_date >= today)
+    .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+    .slice(0, limit);
+
+  return { course_slug: row.courseSlug, country, cohorts };
 }

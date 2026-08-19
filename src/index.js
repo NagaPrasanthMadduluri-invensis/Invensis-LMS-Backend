@@ -12,6 +12,7 @@ import ordersRoutes from "./modules/orders/orders.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import sponsorRoutes from "./modules/sponsor/sponsor.routes.js";
 import reportsRoutes from "./modules/reports/reports.routes.js";
+import cmsRoutes from "./modules/cms/cms.routes.js";
 import { notFound, errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -39,6 +40,7 @@ app.use("/api/orders", ordersRoutes);
 app.use("/api/me", profileRoutes);
 app.use("/api/sponsor", sponsorRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/cms", cmsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

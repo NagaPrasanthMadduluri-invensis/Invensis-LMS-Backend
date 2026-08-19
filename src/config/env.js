@@ -29,6 +29,12 @@ const schema = z.object({
   COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
   COOKIE_SECURE: boolFromEnv.default(false),
 
+  // External CMS (courses + schedule listings). Read-only upstream.
+  CMS_API_BASE_URL: z.string().url().default("https://cms.invensislearning.com/api/v2"),
+  CMS_API_KEY: z.string().optional(), // sent as `Authorization: Bearer …` when set
+  CMS_API_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+  CMS_DEFAULT_COUNTRY: z.string().default("us"),
+
   // Defaults for fields the xCRM order payload does not carry
   SCHEDULE_DEFAULT_CAPACITY: z.coerce.number().int().positive().default(30),
   SCHEDULE_DEFAULT_MIN_SEATS: z.coerce.number().int().positive().default(1),

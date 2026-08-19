@@ -27,6 +27,8 @@ const scheduleSchema = z
     end_time: z.string(),
     session_dates: z.array(z.string()).min(1),
     duration_hours: z.number().optional(),
+    hours_per_day: z.union([z.number(), z.string()]).optional(), // e.g. 8 or "8"
+    timezone_code: z.string().optional(), // fallback for `timezone`
   })
   .passthrough();
 
