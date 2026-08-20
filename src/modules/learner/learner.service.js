@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import {
   issueCertificate,
   generateCertificateCode,
@@ -21,6 +21,7 @@ import {
   attendanceRecords,
   users,
   userProfiles,
+  orders,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -887,15 +888,22 @@ function toCmsCountry(raw) {
  * than failing the dashboard.
  */
 export async function getUpcomingCohorts(userId, { limit = 3 } = {}) {
+  // Resolve the course slug from existing data — prefer the training's stored
+  // slug (set on orders confirmed after the CMS integration), and fall back to
+  // the slug in the original order payload for learners who bought earlier. No
+  // backfill required; both current and future buyers resolve at request time.
+  const slugExpr = sql`COALESCE(${trainingIds.courseSlug}, ${orders.payload}->'course'->>'slug')`;
+
   const [row] = await db
     .select({
-      courseSlug: trainingIds.courseSlug,
+      courseSlug: slugExpr,
       country: participants.country,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
-    .where(and(eq(participants.userId, userId), isNotNull(trainingIds.courseSlug)))
+    .leftJoin(orders, eq(enrolments.orderId, orders.id))
+    .where(and(eq(participants.userId, userId), sql`${slugExpr} IS NOT NULL`))
     .orderBy(desc(enrolments.enrolledAt))
     .limit(1);
 
