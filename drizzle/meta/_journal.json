@@ -134,6 +134,13 @@
       "when": 1787143890217,
       "tag": "0018_nappy_juggernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788331522453,
+      "tag": "0019_daily_wallow",
+      "breakpoints": true
     }
   ]
 }

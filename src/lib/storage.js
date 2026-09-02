@@ -7,7 +7,7 @@
  * private. All helpers return null when storage isn't configured; callers
  * surface a 503.
  */
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "../config/env.js";
 
@@ -63,4 +63,13 @@ export async function presignGet(key, expiresIn = 3600) {
   return getSignedUrl(c, new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }), {
     expiresIn,
   });
+}
+
+// Permanently delete an object. No-op (returns false) when storage isn't
+// configured or no key is given; returns true once the delete is issued.
+export async function deleteObject(key) {
+  const c = getClient();
+  if (!c || !key) return false;
+  await c.send(new DeleteObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+  return true;
 }

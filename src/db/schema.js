@@ -6,6 +6,7 @@ import {
   text,
   boolean,
   integer,
+  bigint,
   timestamp,
   date,
   time,
@@ -30,6 +31,12 @@ export const ticketCategoryEnum = pgEnum("ticket_category", ["reschedule_trainin
 export const ticketPriorityEnum = pgEnum("ticket_priority", ["low", "medium", "high", "urgent"]);
 export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
 export const sessionAttendanceStatusEnum = pgEnum("session_attendance_status", ["present", "absent", "late", "excused"]);
+// Course resource kind: predefined = uploaded per-course in the catalog (courseware
+// shipped with every run); supplementary = added per-training run, during/after it.
+export const resourceKindEnum = pgEnum("resource_kind", ["predefined", "supplementary"]);
+// Coarse resource format, used for iconography/filtering in the portals. `link`
+// is an external URL (e.g. a hosted video); everything else is an R2 object.
+export const resourceTypeEnum = pgEnum("resource_type", ["video", "pdf", "zip", "word", "excel", "ppt", "image", "link", "other"]);
 
 /* ── users ─────────────────────────────────────────────── */
 export const users = pgTable("users", {
@@ -450,5 +457,70 @@ export const ticketMessages = pgTable(
   },
   (t) => ({
     ticketIdx: index("idx_ticket_message_ticket").on(t.ticketId, t.createdAt),
+  })
+);
+
+/* ── courses (catalogue cached from the CMS) ───────────────
+   The CMS is the source of truth for course metadata; we keep a local mirror,
+   keyed by the CMS `slug`, so we can (a) attach admin-managed resources to a
+   stable course row and (b) render the catalogue without a live CMS call.
+   Synced on demand via the admin "Sync from CMS" action. */
+export const courses = pgTable(
+  "courses",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    cmsId: text("cms_id"), // upstream CMS course id (may be absent)
+    slug: text("slug").notNull().unique(), // CMS slug — our stable join key
+    name: text("name").notNull(),
+    shortName: text("short_name"),
+    description: text("description"),
+    courseType: text("course_type"), // certification | training_only
+    certificationIncluded: boolean("certification_included").notNull().default(false),
+    durationHours: integer("duration_hours"),
+    categoryName: text("category_name"),
+    categorySlug: text("category_slug"),
+    iconUrl: text("icon_url"),
+    bannerImageUrl: text("banner_image_url"),
+    isActive: boolean("is_active").notNull().default(true),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    slugIdx: index("idx_course_slug").on(t.slug),
+  })
+);
+
+/* ── course_resources (admin-uploaded courseware) ──────────
+   One row per resource. Predefined resources hang off a course (course_id set,
+   training_id null); supplementary resources hang off a specific training run
+   (training_id set — course_id is also stamped for convenient catalogue rollups).
+   A resource is EITHER an R2 object (storage_key set) OR an external link
+   (external_url set). Uploaded exclusively by admins; enrolled learners read. */
+export const courseResources = pgTable(
+  "course_resources",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    courseId: uuid("course_id").references(() => courses.id),
+    trainingId: uuid("training_id").references(() => trainingIds.id), // set for supplementary
+    kind: resourceKindEnum("kind").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    resourceType: resourceTypeEnum("resource_type").notNull(),
+    // R2 object (null for external links)
+    storageKey: text("storage_key"),
+    fileName: text("file_name"),
+    fileSize: bigint("file_size", { mode: "number" }),
+    contentType: text("content_type"),
+    // External link (null for R2-hosted files)
+    externalUrl: text("external_url"),
+    isActive: boolean("is_active").notNull().default(true),
+    uploadedBy: uuid("uploaded_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    courseIdx: index("idx_resource_course").on(t.courseId, t.kind),
+    trainingIdx: index("idx_resource_training").on(t.trainingId),
   })
 );
