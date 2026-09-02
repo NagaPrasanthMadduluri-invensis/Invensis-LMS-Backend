@@ -12,6 +12,25 @@ export const updateTrainingSchema = z
     message: "Provide trainer_id and/or meeting fields",
   });
 
+// Set training status: Completed / Suspended / (re)Active. Rescheduling is a
+// separate endpoint (it also needs new dates).
+export const setTrainingStatusSchema = z.object({
+  status: z.enum(["completed", "suspended", "active"]),
+  note: z.string().trim().max(1000).optional(),
+});
+
+// Postpone + reschedule to a new date/time/timezone. HH:MM or HH:MM:SS times.
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const rescheduleTrainingSchema = z.object({
+  start_date: z.string().regex(DATE_RE, "start_date must be YYYY-MM-DD"),
+  start_time: z.string().regex(TIME_RE, "start_time must be HH:MM").optional(),
+  end_time: z.string().regex(TIME_RE, "end_time must be HH:MM").optional(),
+  timezone: z.string().trim().min(1).max(64).optional(),
+  session_dates: z.array(z.string().regex(DATE_RE)).min(1).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+
 export const addParticipantSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   email: z.string().trim().toLowerCase().email(),
@@ -108,7 +127,7 @@ export const analyticsQuerySchema = z.object({
   ),
   status: z.preprocess(
     blankToUndef,
-    z.enum(["pending", "active", "ongoing", "completed", "cancelled"]).optional()
+    z.enum(["pending", "active", "ongoing", "completed", "cancelled", "postponed", "suspended"]).optional()
   ),
   trainer_id: z.preprocess(blankToUndef, z.string().uuid().optional()),
   // Location = a venue city, or the literal "Virtual / Online" for online trainings.

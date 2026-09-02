@@ -24,7 +24,7 @@ const filterShape = {
   ),
   status: z.preprocess(
     blankToUndef,
-    z.enum(["pending", "active", "ongoing", "completed", "cancelled"]).optional()
+    z.enum(["pending", "active", "ongoing", "completed", "cancelled", "postponed", "suspended"]).optional()
   ),
   trainer_id: z.preprocess(blankToUndef, z.string().uuid().optional()),
   // Learner billing country, or the literal value shown in the location dropdown.

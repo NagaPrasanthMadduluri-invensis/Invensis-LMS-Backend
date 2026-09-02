@@ -141,6 +141,13 @@
       "when": 1788331522453,
       "tag": "0019_daily_wallow",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788341903214,
+      "tag": "0020_nostalgic_garia",
+      "breakpoints": true
     }
   ]
 }

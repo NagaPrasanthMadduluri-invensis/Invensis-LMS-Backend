@@ -21,7 +21,9 @@ export const roleEnum = pgEnum("role", ["admin", "trainer", "sponsor", "learner"
 export const bucketEnum = pgEnum("bucket", ["direct_online", "corporate", "one_to_one_coaching"]);
 export const deliveryModeEnum = pgEnum("delivery_mode", ["virtual", "in_person", "hybrid", "one_to_one"]);
 export const batchTypeEnum = pgEnum("batch_type", ["weekday", "weekend", "combined"]);
-export const trainingStatusEnum = pgEnum("training_status", ["pending", "active", "ongoing", "completed", "cancelled"]);
+// `postponed` = an active training moved to a new date (behaves as active, shown
+// as Postponed with the new schedule). `suspended` = put on hold indefinitely.
+export const trainingStatusEnum = pgEnum("training_status", ["pending", "active", "ongoing", "completed", "cancelled", "postponed", "suspended"]);
 export const sessionStatusEnum = pgEnum("session_status", ["scheduled", "ongoing", "completed", "cancelled"]);
 export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "cancelled", "transferred", "completed", "failed"]);
 export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "present", "partial", "absent"]);
@@ -180,6 +182,15 @@ export const trainingIds = pgTable(
     courseSlug: text("course_slug"),
     courseType: text("course_type"), // "certification" | "training_only"
     certificationIncluded: boolean("certification_included"), // from CMS meta.certification_inculded
+
+    // Status lifecycle admin controls (postpone/reschedule, complete, suspend).
+    // Full old→new history (incl. rescheduled dates) lives in audit_log; these
+    // just surface the latest change to the portals. `statusNote` = admin's
+    // reason. `postponedAt` marks the last reschedule (drives the "Postponed" tag).
+    statusNote: text("status_note"),
+    statusChangedBy: uuid("status_changed_by").references(() => users.id),
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+    postponedAt: timestamp("postponed_at", { withTimezone: true }),
 
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

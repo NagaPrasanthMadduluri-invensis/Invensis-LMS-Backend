@@ -176,6 +176,229 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
   });
 }
 
+/* ─────────────────────────────────────────────────────────
+   Training status lifecycle: Due-for-update flag, set status
+   (Completed / Suspended / re-Activate), and postpone+reschedule.
+   ───────────────────────────────────────────────────────── */
+
+// Terminal states an admin can't transition out of.
+const TERMINAL_STATUSES = new Set(["completed", "cancelled"]);
+// Statuses that are still "live" for the due-for-update prompt.
+const OPEN_STATUSES = new Set(["pending", "active", "ongoing", "postponed"]);
+
+// "Due for Update" is computed on read — no background job. A training whose end
+// date has passed while it's still open (not completed/cancelled/suspended)
+// prompts the admin to mark it Completed / Postponed / Suspended.
+export function computeDueForUpdate(status, endDate) {
+  if (!endDate || !OPEN_STATUSES.has(status)) return false;
+  const end = new Date(`${String(endDate).slice(0, 10)}T23:59:59Z`);
+  return end.getTime() < Date.now();
+}
+
+/**
+ * Set a training's status to `completed`, `suspended`, or `active` (reactivate a
+ * suspended/postponed one). Rescheduling is a separate action (see below).
+ * `completed`/`cancelled` are terminal — can't be changed once set.
+ */
+export async function setTrainingStatus(adminId, trainingRef, { status, note }, ip) {
+  const ALLOWED = new Set(["completed", "suspended", "active"]);
+  if (!ALLOWED.has(status)) {
+    throw new AppError("status must be one of: completed, suspended, active", 422);
+  }
+  return db.transaction(async (tx) => {
+    const training = await resolveTraining(tx, trainingRef);
+    if (TERMINAL_STATUSES.has(training.status)) {
+      throw new AppError(`This training is ${training.status} and can no longer change status`, 409);
+    }
+    if (training.status === status) {
+      throw new AppError(`Training is already ${status}`, 409);
+    }
+
+    const now = new Date();
+    await tx
+      .update(trainingIds)
+      .set({
+        status,
+        statusNote: note ?? null,
+        statusChangedBy: adminId,
+        statusChangedAt: now,
+        // Reactivating clears the postponed marker.
+        ...(status === "active" ? { postponedAt: null } : {}),
+        updatedAt: now,
+      })
+      .where(eq(trainingIds.id, training.id));
+
+    await writeAudit(tx, {
+      entityType: "training_id",
+      entityId: training.id,
+      action: `status_${status}`,
+      actorId: adminId,
+      before: { status: training.status },
+      after: { status, note: note ?? null },
+      reason: note ?? null,
+      ipAddress: ip,
+    });
+
+    const [updated] = await tx.select().from(trainingIds).where(eq(trainingIds.id, training.id)).limit(1);
+    return publicTraining(updated);
+  });
+}
+
+// Generate N consecutive ISO dates from a start date (YYYY-MM-DD).
+function consecutiveDates(startDate, count) {
+  const out = [];
+  const base = new Date(`${String(startDate).slice(0, 10)}T00:00:00Z`);
+  for (let i = 0; i < count; i++) {
+    const d = new Date(base);
+    d.setUTCDate(base.getUTCDate() + i);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/**
+ * Postpone + reschedule: move an active training to a new date/time/timezone.
+ * The training's single `schedules` row and its `training_sessions` are updated
+ * in place, so every portal (admin/trainer/learner/sponsor) reflects the new
+ * date automatically. Status is set to `postponed` (still an active training
+ * under the hood — just moved). Planned topics on each day are preserved.
+ *
+ * body: { start_date (req), start_time?, end_time?, timezone?, session_dates?, note? }
+ * If `session_dates` isn't given, N consecutive days from `start_date` are used,
+ * N = the current number of sessions (falling back to the current sessionDates).
+ */
+export async function rescheduleTraining(adminId, trainingRef, body, ip) {
+  return db.transaction(async (tx) => {
+    const training = await resolveTraining(tx, trainingRef);
+    if (TERMINAL_STATUSES.has(training.status)) {
+      throw new AppError(`This training is ${training.status} and can't be rescheduled`, 409);
+    }
+    if (!training.scheduleId) {
+      throw new AppError("This training has no schedule to reschedule", 422);
+    }
+
+    const [schedule] = await tx
+      .select()
+      .from(schedules)
+      .where(eq(schedules.id, training.scheduleId))
+      .limit(1);
+    if (!schedule) throw new AppError("Schedule not found", 404);
+
+    // Existing sessions (ordered) — we preserve planned topics by day number.
+    const existing = await tx
+      .select()
+      .from(trainingSessions)
+      .where(eq(trainingSessions.trainingId, training.id))
+      .orderBy(trainingSessions.dayNumber);
+
+    const currentCount = existing.length || (Array.isArray(schedule.sessionDates) ? schedule.sessionDates.length : 1);
+    const startDate = String(body.start_date).slice(0, 10);
+    const startTime = body.start_time || schedule.startTime;
+    const endTime = body.end_time || schedule.endTime;
+    const timezone = body.timezone ?? schedule.timezone;
+
+    const sessionDates =
+      Array.isArray(body.session_dates) && body.session_dates.length
+        ? body.session_dates.map((d) => String(d).slice(0, 10))
+        : consecutiveDates(startDate, currentCount);
+    const endDate = sessionDates[sessionDates.length - 1];
+
+    const before = {
+      start_date: schedule.startDate,
+      end_date: schedule.endDate,
+      start_time: schedule.startTime,
+      end_time: schedule.endTime,
+      timezone: schedule.timezone,
+      session_dates: schedule.sessionDates,
+    };
+
+    // 1. Update the schedule row (the single source of dates for all portals).
+    await tx
+      .update(schedules)
+      .set({
+        startDate: sessionDates[0],
+        endDate,
+        startTime,
+        endTime,
+        timezone,
+        sessionDates,
+        updatedAt: new Date(),
+      })
+      .where(eq(schedules.id, schedule.id));
+
+    // 2. Regenerate day-wise sessions. Update overlapping days in place (keeping
+    //    planned_topics), insert new days, and drop surplus days that have no
+    //    attendance recorded (never orphan attendance rows).
+    for (let i = 0; i < sessionDates.length; i++) {
+      const d = sessionDates[i];
+      const start = new Date(`${d}T${startTime}Z`);
+      const end = new Date(`${d}T${endTime}Z`);
+      const row = existing[i];
+      if (row) {
+        await tx
+          .update(trainingSessions)
+          .set({ startTime: start, endTime: end, status: "scheduled" })
+          .where(eq(trainingSessions.id, row.id));
+      } else {
+        await tx.insert(trainingSessions).values({
+          trainingId: training.id,
+          dayNumber: i + 1,
+          startTime: start,
+          endTime: end,
+        });
+      }
+    }
+    // Surplus sessions (schedule now shorter): delete only if no attendance.
+    for (let i = sessionDates.length; i < existing.length; i++) {
+      const row = existing[i];
+      const [att] = await tx
+        .select({ id: attendanceRecords.id })
+        .from(attendanceRecords)
+        .where(eq(attendanceRecords.sessionId, row.id))
+        .limit(1);
+      if (!att) {
+        await tx.delete(trainingSessions).where(eq(trainingSessions.id, row.id));
+      }
+    }
+
+    // 3. Flag the training as postponed (still active under the hood).
+    const now = new Date();
+    await tx
+      .update(trainingIds)
+      .set({
+        status: "postponed",
+        statusNote: body.note ?? null,
+        statusChangedBy: adminId,
+        statusChangedAt: now,
+        postponedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(trainingIds.id, training.id));
+
+    await writeAudit(tx, {
+      entityType: "training_id",
+      entityId: training.id,
+      action: "rescheduled",
+      actorId: adminId,
+      before,
+      after: { start_date: sessionDates[0], end_date: endDate, start_time: startTime, end_time: endTime, timezone, session_dates: sessionDates },
+      reason: body.note ?? null,
+      ipAddress: ip,
+    });
+
+    const [updated] = await tx.select().from(trainingIds).where(eq(trainingIds.id, training.id)).limit(1);
+    return {
+      ...publicTraining(updated),
+      start_date: sessionDates[0],
+      end_date: endDate,
+      start_time: startTime,
+      end_time: endTime,
+      timezone,
+      session_dates: sessionDates,
+    };
+  });
+}
+
 /* ── List all trainings (Training IDs) for the admin courses view ── */
 export async function listTrainings() {
   const rows = await db
@@ -218,6 +441,7 @@ export async function listTrainings() {
       code: r.code,
       title: r.title,
       status: r.status,
+      due_for_update: computeDueForUpdate(r.status, r.endDate),
       delivery_mode: r.deliveryMode,
       bucket: r.bucket,
       capacity: r.capacity,
@@ -318,6 +542,10 @@ export async function getTrainingDetail(trainingRef) {
     delivery_mode: training.deliveryMode,
     bucket: training.bucket,
     status: training.status,
+    due_for_update: computeDueForUpdate(training.status, schedule?.endDate),
+    status_note: training.statusNote ?? null,
+    status_changed_at: training.statusChangedAt ?? null,
+    postponed_at: training.postponedAt ?? null,
     course_slug: training.courseSlug ?? null,
     course_type: training.courseType ?? null,
     certification_included: training.certificationIncluded ?? false,
@@ -1388,7 +1616,7 @@ export async function getDashboard() {
     pendingSetup += r.pendingSetup;
   }
 
-  const statusTemplate = { pending: 0, active: 0, ongoing: 0, completed: 0, cancelled: 0 };
+  const statusTemplate = { pending: 0, active: 0, ongoing: 0, completed: 0, cancelled: 0, postponed: 0, suspended: 0 };
   const coursesByStatus = { ...statusTemplate };
   for (const r of statusRows) coursesByStatus[r.status] = r.count;
 
@@ -2007,7 +2235,7 @@ export async function getAnalytics(filters = {}) {
   const trainings = trainingsRes.rows;
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  const statusTpl = { pending: 0, active: 0, ongoing: 0, completed: 0, cancelled: 0 };
+  const statusTpl = { pending: 0, active: 0, ongoing: 0, completed: 0, cancelled: 0, postponed: 0, suspended: 0 };
   const byStatus = { ...statusTpl };
   const byMode = {};
   const byBucket = {};

@@ -120,6 +120,20 @@ router.patch(
 );
 
 router.patch(
+  "/trainings/:trainingId/status",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.setTrainingStatus)
+);
+
+router.patch(
+  "/trainings/:trainingId/reschedule",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.rescheduleTraining)
+);
+
+router.patch(
   "/trainings/:trainingId",
   verifyToken,
   requireRole("admin"),

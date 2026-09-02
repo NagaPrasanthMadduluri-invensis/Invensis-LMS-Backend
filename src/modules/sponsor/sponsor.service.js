@@ -10,7 +10,7 @@ export async function getDashboard(sponsorUserId) {
   const { rows } = await db.execute(sql`
     SELECT
       count(DISTINCT e.participant_id) FILTER (WHERE e.status <> 'transferred')::int AS learners_count,
-      count(DISTINCT e.participant_id) FILTER (WHERE e.status = 'confirmed' AND t.status IN ('active', 'ongoing'))::int AS active_count,
+      count(DISTINCT e.participant_id) FILTER (WHERE e.status = 'confirmed' AND t.status IN ('active', 'ongoing', 'postponed'))::int AS active_count,
       count(DISTINCT o.id)::int AS invoices_count,
       COALESCE(sum(e.amount) FILTER (WHERE o.payment_status <> 'paid'), 0) AS outstanding_amount,
       max(e.currency) AS currency_code
