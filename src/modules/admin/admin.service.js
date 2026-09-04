@@ -256,16 +256,39 @@ function consecutiveDates(startDate, count) {
   return out;
 }
 
+// Minutes past midnight for a "HH:MM" / "HH:MM:SS" wall time.
+function timeToMinutes(t) {
+  const [h, m] = String(t).split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+// "09:00" → "09:00:00". The API accepts HH:MM, Postgres `time` stores
+// HH:MM:SS; normalising up front keeps the row, the response and the audit
+// entry all quoting the same string.
+function normalizeTime(t) {
+  const [h = "00", m = "00", sec = "00"] = String(t).split(":");
+  return `${h.padStart(2, "0")}:${m.padStart(2, "0")}:${sec.padStart(2, "0")}`;
+}
+
 /**
- * Postpone + reschedule: move an active training to a new date/time/timezone.
+ * Postpone + reschedule: move an active training to new days/times/timezone.
  * The training's single `schedules` row and its `training_sessions` are updated
  * in place, so every portal (admin/trainer/learner/sponsor) reflects the new
  * date automatically. Status is set to `postponed` (still an active training
  * under the hood — just moved). Planned topics on each day are preserved.
  *
- * body: { start_date (req), start_time?, end_time?, timezone?, session_dates?, note? }
- * If `session_dates` isn't given, N consecutive days from `start_date` are used,
+ * body: { session_dates?, start_date?, start_time?, end_time?, timezone?, note? }
+ *
+ * `session_dates` is the real input: the exact days the training runs on, which
+ * need not be consecutive — a two-month window may hold only ten teaching days.
+ * They are sorted and de-duplicated here, and the schedule's `start_date` /
+ * `end_date` become the first and last of them.
+ *
+ * `start_date` alone is the legacy shorthand: N consecutive days from it, where
  * N = the current number of sessions (falling back to the current sessionDates).
+ *
+ * `hours_per_day` and `duration_hours` are recomputed from the daily window and
+ * the day count, so the stored totals never drift from the new schedule.
  */
 export async function rescheduleTraining(adminId, trainingRef, body, ip) {
   return db.transaction(async (tx) => {
@@ -292,16 +315,31 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       .orderBy(trainingSessions.dayNumber);
 
     const currentCount = existing.length || (Array.isArray(schedule.sessionDates) ? schedule.sessionDates.length : 1);
-    const startDate = String(body.start_date).slice(0, 10);
-    const startTime = body.start_time || schedule.startTime;
-    const endTime = body.end_time || schedule.endTime;
+    const startTime = normalizeTime(body.start_time || schedule.startTime);
+    const endTime = normalizeTime(body.end_time || schedule.endTime);
     const timezone = body.timezone ?? schedule.timezone;
 
+    if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+      throw new AppError("The daily end time must be after the start time", 422);
+    }
+
+    // The exact training days. Sorted and de-duplicated so the first is always
+    // the new start and the last the new end, whatever order they were picked.
     const sessionDates =
       Array.isArray(body.session_dates) && body.session_dates.length
-        ? body.session_dates.map((d) => String(d).slice(0, 10))
-        : consecutiveDates(startDate, currentCount);
+        ? [...new Set(body.session_dates.map((d) => String(d).slice(0, 10)))].sort()
+        : consecutiveDates(String(body.start_date).slice(0, 10), currentCount);
+
+    const startDate = sessionDates[0];
     const endDate = sessionDates[sessionDates.length - 1];
+
+    // Totals follow from the window and the day count — never left to drift.
+    // Both columns are integers, so the total is rounded from the exact
+    // minutes rather than from the already-rounded per-day figure (a 8h30m
+    // window over 10 days is 85 hours, not 90).
+    const minutesPerDay = timeToMinutes(endTime) - timeToMinutes(startTime);
+    const hoursPerDay = Math.round(minutesPerDay / 60);
+    const durationHours = Math.round((minutesPerDay * sessionDates.length) / 60);
 
     const before = {
       start_date: schedule.startDate,
@@ -310,18 +348,22 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       end_time: schedule.endTime,
       timezone: schedule.timezone,
       session_dates: schedule.sessionDates,
+      hours_per_day: schedule.hoursPerDay,
+      duration_hours: schedule.durationHours,
     };
 
     // 1. Update the schedule row (the single source of dates for all portals).
     await tx
       .update(schedules)
       .set({
-        startDate: sessionDates[0],
+        startDate,
         endDate,
         startTime,
         endTime,
         timezone,
         sessionDates,
+        hoursPerDay,
+        durationHours,
         updatedAt: new Date(),
       })
       .where(eq(schedules.id, schedule.id));
@@ -349,15 +391,32 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       }
     }
     // Surplus sessions (schedule now shorter): delete only if no attendance.
-    for (let i = sessionDates.length; i < existing.length; i++) {
-      const row = existing[i];
-      const [att] = await tx
-        .select({ id: attendanceRecords.id })
-        .from(attendanceRecords)
-        .where(eq(attendanceRecords.sessionId, row.id))
-        .limit(1);
-      if (!att) {
-        await tx.delete(trainingSessions).where(eq(trainingSessions.id, row.id));
+    //
+    // Attendance isn't deployed in every environment. Probe for the table once
+    // rather than letting a missing-relation error abort the whole transaction
+    // (Postgres poisons a transaction on the first failed statement, so a
+    // try/catch here would not save it). No table means no attendance rows to
+    // protect, so the surplus days are simply removed.
+    if (sessionDates.length < existing.length) {
+      const probe = await tx.execute(
+        sql`select to_regclass('public.attendance_records') is not null as present`
+      );
+      const attendanceTracked = !!(probe.rows?.[0]?.present ?? probe[0]?.present);
+
+      for (let i = sessionDates.length; i < existing.length; i++) {
+        const row = existing[i];
+        let attended = false;
+        if (attendanceTracked) {
+          const [att] = await tx
+            .select({ id: attendanceRecords.id })
+            .from(attendanceRecords)
+            .where(eq(attendanceRecords.sessionId, row.id))
+            .limit(1);
+          attended = !!att;
+        }
+        if (!attended) {
+          await tx.delete(trainingSessions).where(eq(trainingSessions.id, row.id));
+        }
       }
     }
 
@@ -381,7 +440,16 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       action: "rescheduled",
       actorId: adminId,
       before,
-      after: { start_date: sessionDates[0], end_date: endDate, start_time: startTime, end_time: endTime, timezone, session_dates: sessionDates },
+      after: {
+        start_date: startDate,
+        end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
+        timezone,
+        session_dates: sessionDates,
+        hours_per_day: hoursPerDay,
+        duration_hours: durationHours,
+      },
       reason: body.note ?? null,
       ipAddress: ip,
     });
@@ -389,12 +457,14 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
     const [updated] = await tx.select().from(trainingIds).where(eq(trainingIds.id, training.id)).limit(1);
     return {
       ...publicTraining(updated),
-      start_date: sessionDates[0],
+      start_date: startDate,
       end_date: endDate,
       start_time: startTime,
       end_time: endTime,
       timezone,
       session_dates: sessionDates,
+      hours_per_day: hoursPerDay,
+      duration_hours: durationHours,
     };
   });
 }

@@ -19,17 +19,35 @@ export const setTrainingStatusSchema = z.object({
   note: z.string().trim().max(1000).optional(),
 });
 
-// Postpone + reschedule to a new date/time/timezone. HH:MM or HH:MM:SS times.
+// Postpone + reschedule. HH:MM or HH:MM:SS times.
+//
+// `session_dates` is the real input: the individual days the training runs on,
+// which need not be consecutive — a two-month window might hold ten teaching
+// days. `start_date` is the legacy shorthand: give it alone and the service
+// lays out the existing number of days consecutively from it.
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-export const rescheduleTrainingSchema = z.object({
-  start_date: z.string().regex(DATE_RE, "start_date must be YYYY-MM-DD"),
-  start_time: z.string().regex(TIME_RE, "start_time must be HH:MM").optional(),
-  end_time: z.string().regex(TIME_RE, "end_time must be HH:MM").optional(),
-  timezone: z.string().trim().min(1).max(64).optional(),
-  session_dates: z.array(z.string().regex(DATE_RE)).min(1).optional(),
-  note: z.string().trim().max(1000).optional(),
-});
+export const rescheduleTrainingSchema = z
+  .object({
+    start_date: z.string().regex(DATE_RE, "start_date must be YYYY-MM-DD").optional(),
+    start_time: z.string().regex(TIME_RE, "start_time must be HH:MM").optional(),
+    end_time: z.string().regex(TIME_RE, "end_time must be HH:MM").optional(),
+    timezone: z.string().trim().min(1).max(64).optional(),
+    session_dates: z
+      .array(z.string().regex(DATE_RE, "session dates must be YYYY-MM-DD"))
+      .min(1, "Pick at least one training day")
+      .max(365, "A training can't run for more than 365 days")
+      .optional(),
+    note: z.string().trim().max(1000).optional(),
+  })
+  .refine((d) => d.start_date || d.session_dates?.length, {
+    message: "Provide session_dates (the training days) or a start_date",
+    path: ["session_dates"],
+  })
+  .refine((d) => !d.session_dates || new Set(d.session_dates).size === d.session_dates.length, {
+    message: "session_dates must not repeat a day",
+    path: ["session_dates"],
+  });
 
 export const addParticipantSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
