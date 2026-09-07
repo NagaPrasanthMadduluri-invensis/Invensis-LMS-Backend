@@ -143,6 +143,7 @@ export async function getTrainingDetail(userId, trainingRef) {
       .select({
         startDate: schedules.startDate,
         endDate: schedules.endDate,
+        sessionDates: schedules.sessionDates,
         startTime: schedules.startTime,
         endTime: schedules.endTime,
         timezone: schedules.timezone,
@@ -213,6 +214,11 @@ export async function getTrainingDetail(userId, trainingRef) {
     certification_included: training.certificationIncluded ?? false,
     start_date: schedule?.startDate ?? null,
     end_date: schedule?.endDate ?? null,
+    // The exact days this training runs on — a reschedule can leave gaps, so
+    // the start/end range alone doesn't say which days those are.
+    session_dates: schedule?.sessionDates ?? null,
+    start_time: schedule?.startTime ?? null,
+    end_time: schedule?.endTime ?? null,
     timezone: schedule?.timezone ?? null,
     duration_hours: schedule?.durationHours ?? null,
     hours_per_day: schedule?.hoursPerDay ?? null,

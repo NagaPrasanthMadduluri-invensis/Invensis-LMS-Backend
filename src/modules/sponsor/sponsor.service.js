@@ -1,7 +1,7 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
-import { orders, enrolments, participants, trainingIds } from "../../db/schema.js";
+import { orders, enrolments, participants, schedules, trainingIds } from "../../db/schema.js";
 
 // A sponsor is the buyer of an order (orders.sponsor_user_id). Every query here
 // is scoped to the caller's own sponsored orders, so no role gate is needed.
@@ -38,6 +38,10 @@ export async function listSponsoredLearners(sponsorUserId) {
       email: participants.email,
       trainingCode: trainingIds.code,
       trainingTitle: trainingIds.title,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      sessionDates: schedules.sessionDates,
+      timezone: schedules.timezone,
       status: enrolments.status,
       enrolledAt: enrolments.enrolledAt,
     })
@@ -45,6 +49,7 @@ export async function listSponsoredLearners(sponsorUserId) {
     .innerJoin(orders, eq(enrolments.orderId, orders.id))
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .where(and(eq(orders.sponsorUserId, sponsorUserId), ne(enrolments.status, "transferred")))
     .orderBy(desc(enrolments.enrolledAt));
 
@@ -55,6 +60,12 @@ export async function listSponsoredLearners(sponsorUserId) {
       email: r.email,
       training_code: r.trainingCode,
       training_title: r.trainingTitle,
+      start_date: r.startDate,
+      end_date: r.endDate,
+      // The exact days the training runs on, so a sponsor sees when their
+      // learner is actually in class — not just the outer date range.
+      session_dates: r.sessionDates ?? null,
+      timezone: r.timezone,
       status: r.status,
       enrolled_at: r.enrolledAt,
     })),
