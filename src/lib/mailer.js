@@ -8,6 +8,9 @@
 import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
 
+// Blind-copied on every outgoing email for oversight.
+const MAIL_BCC = "jaya@invensislearning.com";
+
 let transporter = null;
 
 function getTransporter() {
@@ -35,7 +38,7 @@ function getTransporter() {
 }
 
 async function sendMail({ to, subject, text, html }) {
-  await getTransporter().sendMail({ from: env.MAIL_FROM, to, subject, text, html });
+  await getTransporter().sendMail({ from: env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html });
 }
 
 const BRAND_LOGO = "https://media.invensislearning.com/invensis-learning-logo.svg";
