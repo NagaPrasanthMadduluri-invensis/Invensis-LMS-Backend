@@ -53,16 +53,28 @@ export async function createSetupToken(runner, userId, purpose) {
 }
 
 /**
+ * Issue a token and email the link, **throwing** if either step fails. Use this
+ * where the caller is a person waiting on the result — an admin clicking
+ * "Resend setup email" has to be told when the mail didn't go out.
+ * `user` = { id, name, email }. Returns the token's expiry.
+ */
+export async function sendAccountSetupLink(user, purpose = "setup") {
+  const { raw, expiresAt } = await createSetupToken(db, user.id, purpose);
+  const link = buildLink(raw, purpose);
+  if (purpose === "reset") await sendPasswordResetEmail(user, link);
+  else await sendAccountSetupEmail(user, link);
+  return { expiresAt };
+}
+
+/**
  * Issue a token and email the link. Never throws — a mail failure must not roll
- * back an already-committed account creation; it's logged for follow-up.
+ * back an already-committed account creation; it's logged for follow-up, and
+ * the admin can resend from User Management / Trainers.
  * `user` = { id, name, email }.
  */
 export async function provisionAccountSetup(user, purpose = "setup") {
   try {
-    const { raw } = await createSetupToken(db, user.id, purpose);
-    const link = buildLink(raw, purpose);
-    if (purpose === "reset") await sendPasswordResetEmail(user, link);
-    else await sendAccountSetupEmail(user, link);
+    await sendAccountSetupLink(user, purpose);
   } catch (err) {
     console.error(
       `[account-setup] failed to provision ${purpose} for ${user.email}: ${err.message}`

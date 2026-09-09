@@ -117,6 +117,24 @@ export async function updateTrainer(req, res) {
   res.json({ trainer });
 }
 
+export async function resendTrainerSetupEmail(req, res) {
+  const result = await adminService.resendTrainerSetupEmail(
+    req.user.user_id,
+    req.params.trainerId,
+    req.ip
+  );
+  res.json(result);
+}
+
+export async function resendParticipantSetupEmail(req, res) {
+  const result = await adminService.resendParticipantSetupEmail(
+    req.user.user_id,
+    req.params.participantId,
+    req.ip
+  );
+  res.json(result);
+}
+
 export async function listParticipants(req, res) {
   const query = listParticipantsQuerySchema.parse(req.query);
   res.json(await adminService.listParticipants(query));

@@ -18,7 +18,7 @@ import {
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { hashPassword } from "../../lib/password.js";
-import { provisionAccountSetup } from "../../lib/account-setup.js";
+import { provisionAccountSetup, sendAccountSetupLink } from "../../lib/account-setup.js";
 import { issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 
@@ -689,6 +689,7 @@ export async function listTrainers({ includeInactive = false } = {}) {
       country: trainers.country,
       isRemote: trainers.isRemote,
       isActive: trainers.isActive,
+      hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
     })
     .from(trainers)
     .innerJoin(users, eq(trainers.userId, users.id))
@@ -710,6 +711,9 @@ export async function listTrainers({ includeInactive = false } = {}) {
       is_remote: r.isRemote ?? false,
       location: formatTrainerLocation({ city: r.city, country: r.country, isRemote: r.isRemote }),
       is_active: r.isActive,
+      // false until the trainer has followed their setup link and chosen a
+      // password — the admin can resend that mail from the list.
+      has_password: r.hasPassword ?? false,
     })),
   };
 }
@@ -840,6 +844,7 @@ function publicTrainer(t, u) {
     is_remote: t.isRemote ?? false,
     location: formatTrainerLocation({ city: t.city, country: t.country, isRemote: t.isRemote }),
     is_active: t.isActive,
+    has_password: !!u.passwordHash,
   };
 }
 
@@ -898,6 +903,89 @@ export async function onboardTrainer(adminId, body, ip) {
 
   if (provision) await provisionAccountSetup(provision, "setup");
   return result;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Resend the account-setup email
+   ───────────────────────────────────────────────────────── */
+
+/**
+ * Re-issue a password-setup link for an account that never completed setup.
+ *
+ * Sending supersedes any earlier unused link (see `createSetupToken`), so the
+ * newest mail is always the one that works. Unlike account creation, this is
+ * driven by an admin waiting on the result, so a mail failure is reported
+ * rather than swallowed.
+ */
+async function resendSetupEmail(adminId, { userId, entityType, entityId }, ip) {
+  const [user] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      isActive: users.isActive,
+      passwordHash: users.passwordHash,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!user) throw new AppError("Portal account not found", 404);
+  if (user.passwordHash) {
+    throw new AppError("This account has already been set up — send a password reset instead", 409);
+  }
+  if (!user.isActive) {
+    throw new AppError("This account is deactivated — reactivate it before resending the setup email", 409);
+  }
+
+  let expiresAt;
+  try {
+    ({ expiresAt } = await sendAccountSetupLink(
+      { id: user.id, name: user.name, email: user.email },
+      "setup"
+    ));
+  } catch (err) {
+    console.error(`[admin] resend setup email failed for ${user.email}: ${err.message}`);
+    throw new AppError("Could not send the setup email. Check the mail settings and try again.", 502);
+  }
+
+  await writeAudit(db, {
+    entityType,
+    entityId,
+    action: "setup_email_resent",
+    actorId: adminId,
+    after: { email: user.email },
+    ipAddress: ip,
+  });
+
+  return { email: user.email, sent_at: new Date(), expires_at: expiresAt };
+}
+
+/** User Management → resend the setup mail for a participant's portal account. */
+export async function resendParticipantSetupEmail(adminId, participantId, ip) {
+  const [p] = await db
+    .select({ id: participants.id, userId: participants.userId })
+    .from(participants)
+    .where(eq(participants.id, participantId))
+    .limit(1);
+  if (!p) throw new AppError("Participant not found", 404);
+  if (!p.userId) {
+    throw new AppError("This participant has no portal account yet — nothing to resend", 409);
+  }
+  return resendSetupEmail(adminId, { userId: p.userId, entityType: "participant", entityId: p.id }, ip);
+}
+
+/** Trainers → resend the setup mail for an onboarded trainer. */
+export async function resendTrainerSetupEmail(adminId, trainerId, ip) {
+  const [t] = await db
+    .select({ id: trainers.id, userId: trainers.userId, isActive: trainers.isActive })
+    .from(trainers)
+    .where(eq(trainers.id, trainerId))
+    .limit(1);
+  if (!t) throw new AppError("Trainer not found", 404);
+  if (t.isActive === false) {
+    throw new AppError("This trainer is deactivated — reactivate them before resending the setup email", 409);
+  }
+  return resendSetupEmail(adminId, { userId: t.userId, entityType: "trainer", entityId: t.id }, ip);
 }
 
 // Bucket a training into a display category from its lifecycle status.

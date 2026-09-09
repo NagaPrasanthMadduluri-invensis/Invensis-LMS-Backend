@@ -56,6 +56,14 @@ router.patch(
   asyncHandler(ctrl.updateTrainer)
 );
 
+// Re-send the "set your password" mail to a trainer who never received it.
+router.post(
+  "/trainers/:trainerId/resend-setup-email",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.resendTrainerSetupEmail)
+);
+
 router.get(
   "/participants",
   verifyToken,
@@ -75,6 +83,14 @@ router.patch(
   verifyToken,
   requireRole("admin"),
   asyncHandler(ctrl.updateParticipant)
+);
+
+// Re-send the "set your password" mail to a learner who never received it.
+router.post(
+  "/participants/:participantId/resend-setup-email",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.resendParticipantSetupEmail)
 );
 
 router.patch(
