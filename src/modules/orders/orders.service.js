@@ -75,8 +75,10 @@ const learnerName = (l) =>
 async function generateTrainingCode(tx, year) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(987654321)`);
   const prefix = `TRN-${year}-`;
+  // Highest existing suffix + 1 (gap-safe). COUNT(*) breaks once any training is
+  // deleted — COUNT drops below MAX and the next code collides with a live one.
   const res = await tx.execute(
-    sql`SELECT count(*)::int AS n FROM training_ids WHERE code LIKE ${prefix + "%"}`
+    sql`SELECT COALESCE(MAX(substring(code from '[0-9]+$')::int), 0) AS n FROM training_ids WHERE code LIKE ${prefix + "%"}`
   );
   const next = (res.rows?.[0]?.n ?? 0) + 1;
   return `${prefix}${String(next).padStart(4, "0")}`;
