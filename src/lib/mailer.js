@@ -9,7 +9,7 @@ import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
 
 // Blind-copied on every outgoing email for oversight.
-const MAIL_BCC = "jaya@invensislearning.com";
+const MAIL_BCC = "operations@invensislearning.com";
 
 let transporter = null;
 
