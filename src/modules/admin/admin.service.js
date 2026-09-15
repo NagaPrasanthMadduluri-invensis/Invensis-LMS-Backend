@@ -21,6 +21,11 @@ import { hashPassword } from "../../lib/password.js";
 import { provisionAccountSetup, sendAccountSetupLink } from "../../lib/account-setup.js";
 import { issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
+import {
+  notifyJoinLinkReleased,
+  notifyTrainerAssigned,
+  notifyCohortRescheduled,
+} from "../../lib/cohort-notifications.js";
 
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -52,9 +57,12 @@ function publicTraining(t) {
 }
 
 export async function updateTraining(adminId, trainingRef, body, ip) {
-  return db.transaction(async (tx) => {
+  // Learner notifications are collected here and sent AFTER commit (best-effort).
+  const notify = { trainingId: null, trainerAssigned: false, meetingReleased: false };
+  const result = await db.transaction(async (tx) => {
     const training = await resolveTraining(tx, trainingRef);
     const trainingId = training.id;
+    notify.trainingId = trainingId;
 
     /* ── Assign trainer ── */
     if (body.trainer_id) {
@@ -100,6 +108,7 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
         after: { trainer_id: body.trainer_id },
         ipAddress: ip,
       });
+      notify.trainerAssigned = true;
     }
 
     /* ── Set meeting link ── */
@@ -164,7 +173,10 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
       });
 
       // Real impl would enqueue after commit; the stub just logs.
-      if (releasing) await enqueueMeetingLinkRelease(trainingId);
+      if (releasing) {
+        await enqueueMeetingLinkRelease(trainingId);
+        notify.meetingReleased = true;
+      }
     }
 
     const [updated] = await tx
@@ -174,6 +186,11 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
       .limit(1);
     return publicTraining(updated);
   });
+
+  // After commit — email the cohort's learners (best-effort; never throws).
+  if (notify.trainerAssigned) await notifyTrainerAssigned(notify.trainingId);
+  if (notify.meetingReleased) await notifyJoinLinkReleased(notify.trainingId);
+  return result;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -291,7 +308,8 @@ function normalizeTime(t) {
  * the day count, so the stored totals never drift from the new schedule.
  */
 export async function rescheduleTraining(adminId, trainingRef, body, ip) {
-  return db.transaction(async (tx) => {
+  let notify = null;
+  const result = await db.transaction(async (tx) => {
     const training = await resolveTraining(tx, trainingRef);
     if (TERMINAL_STATUSES.has(training.status)) {
       throw new AppError(`This training is ${training.status} and can't be rescheduled`, 409);
@@ -454,6 +472,15 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       ipAddress: ip,
     });
 
+    notify = {
+      trainingId: training.id,
+      oldStart: before.start_date,
+      oldEnd: before.end_date,
+      newStart: startDate,
+      newEnd: endDate,
+      reason: body.note ?? null,
+    };
+
     const [updated] = await tx.select().from(trainingIds).where(eq(trainingIds.id, training.id)).limit(1);
     return {
       ...publicTraining(updated),
@@ -467,6 +494,10 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       duration_hours: durationHours,
     };
   });
+
+  // After commit — email the cohort's learners that dates moved (best-effort).
+  if (notify) await notifyCohortRescheduled(notify.trainingId, notify);
+  return result;
 }
 
 /* ── List all trainings (Training IDs) for the admin courses view ── */

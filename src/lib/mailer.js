@@ -38,7 +38,9 @@ function getTransporter() {
 }
 
 async function sendMail({ to, subject, text, html }) {
-  await getTransporter().sendMail({ from: env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html });
+  const msg = { from: env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html };
+  await getTransporter().sendMail(msg);
+  return msg;
 }
 
 const BRAND_LOGO = "https://media.invensislearning.com/invensis-learning-logo.svg";
@@ -61,10 +63,12 @@ const EMAIL_FOOTER = `<tr><td style="background:#101030;padding:30px 34px 26px;t
   <p style="margin:0;font:400 10.5px/1.6 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#6f78a0;">Copyright © 2026 Invensis Inc. All rights reserved.<br>This is a service email relating to your account with Invensis Inc.</p>
 </td></tr>`;
 
-// Branded, email-client-safe HTML shell matching the Invensis Learning template
-// (dark header + logo, orange accent rule, Plus Jakarta Sans, branded footer).
-// Only the content differs per email; the layout/style is shared.
-function emailShell({ subject, preheader, eyebrow, heading, greeting, body, buttonLabel, link }) {
+const FONT = "'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+// Branded, email-client-safe outer chrome (dark logo header, orange accent rule,
+// Plus Jakarta Sans, dark footer). Every email shares this; only `contentHtml` —
+// the block inside the padded body cell — changes per message.
+function renderEmail({ subject, preheader, contentHtml }) {
   return `<!DOCTYPE html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
@@ -88,26 +92,160 @@ a{color:#018BD4}
 </td></tr>
 <tr><td style="height:4px;background:#F8981C;font-size:0;line-height:0;"> </td></tr>
 <tr><td class="pad" style="padding:32px 34px 34px;">
-<div style="margin:0 0 20px;">
-  <p style="margin:0 0 9px;font:800 11px/1 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;letter-spacing:.15em;text-transform:uppercase;color:#F8981C;">${eyebrow}</p>
-  <h1 style="margin:0;font:800 30px/1.15 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#101030;letter-spacing:-.01em;">${heading}</h1>
-</div>
-<p style="margin:0 0 16px;font:400 16px/1.65 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#374151;">${greeting}</p>
-<p style="margin:0 0 22px;font:400 16px/1.65 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#374151;">${body}</p>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:6px 0 22px;"><tbody>
-  <tr><td align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tbody><tr><td align="center" bgcolor="#F8981C" style="border-radius:10px;"><a href="${link}" style="display:inline-block;padding:15px 34px;font:800 14.5px/1 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#101030;text-decoration:none;border-radius:10px;letter-spacing:.01em;">${buttonLabel} →</a></td></tr></tbody></table></td></tr>
-  <tr><td align="center" style="padding:11px 0 0;font:500 11.5px/1.5 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#6b7280;">This link is valid for ${env.SETUP_TOKEN_TTL_HOURS} hours</td></tr>
-</tbody></table>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 4px;background:#f4f7fb;border:1px solid #e5e7eb;border-radius:11px;"><tbody><tr><td style="padding:14px 16px;">
-  <p style="margin:0 0 5px;font:700 10.5px/1 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#6b7280;">Button not working?</p>
-  <p style="margin:0;font:400 13px/1.6 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#374151;word-break:break-all;">Paste this link into your browser:<br><a href="${link}" style="color:#018BD4;">${link}</a></p>
-</td></tr></tbody></table>
-<p style="margin:26px 0 0;font:400 15px/1.6 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;color:#374151;">Warm regards,<br><strong style="color:#101030;">The Invensis Learning Team</strong></p>
+${contentHtml}
 </td></tr>
 ${EMAIL_FOOTER}
 </tbody></table>
 </td></tr></tbody></table>
 </body></html>`;
+}
+
+// Token emails (account setup, password reset): eyebrow + heading + one body
+// paragraph + a single CTA whose link expires, with a paste-the-link fallback.
+function emailShell({ subject, preheader, eyebrow, heading, greeting, body, buttonLabel, link }) {
+  const contentHtml = `<div style="margin:0 0 20px;">
+  <p style="margin:0 0 9px;font:800 11px/1 ${FONT};letter-spacing:.15em;text-transform:uppercase;color:#F8981C;">${eyebrow}</p>
+  <h1 style="margin:0;font:800 30px/1.15 ${FONT};color:#101030;letter-spacing:-.01em;">${heading}</h1>
+</div>
+<p style="margin:0 0 16px;font:400 16px/1.65 ${FONT};color:#374151;">${greeting}</p>
+<p style="margin:0 0 22px;font:400 16px/1.65 ${FONT};color:#374151;">${body}</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:6px 0 22px;"><tbody>
+  <tr><td align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tbody><tr><td align="center" bgcolor="#F8981C" style="border-radius:10px;"><a href="${link}" style="display:inline-block;padding:15px 34px;font:800 14.5px/1 ${FONT};color:#101030;text-decoration:none;border-radius:10px;letter-spacing:.01em;">${buttonLabel} →</a></td></tr></tbody></table></td></tr>
+  <tr><td align="center" style="padding:11px 0 0;font:500 11.5px/1.5 ${FONT};color:#6b7280;">This link is valid for ${env.SETUP_TOKEN_TTL_HOURS} hours</td></tr>
+</tbody></table>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 4px;background:#f4f7fb;border:1px solid #e5e7eb;border-radius:11px;"><tbody><tr><td style="padding:14px 16px;">
+  <p style="margin:0 0 5px;font:700 10.5px/1 ${FONT};letter-spacing:.1em;text-transform:uppercase;color:#6b7280;">Button not working?</p>
+  <p style="margin:0;font:400 13px/1.6 ${FONT};color:#374151;word-break:break-all;">Paste this link into your browser:<br><a href="${link}" style="color:#018BD4;">${link}</a></p>
+</td></tr></tbody></table>
+<p style="margin:26px 0 0;font:400 15px/1.6 ${FONT};color:#374151;">Warm regards,<br><strong style="color:#101030;">The Invensis Learning Team</strong></p>`;
+  return renderEmail({ subject, preheader, contentHtml });
+}
+
+/* ── Cohort-update email content blocks (shared visual language) ── */
+const cohortHead = (eyebrow, heading, sub) =>
+  `<div style="margin:0 0 18px;">
+  <p style="margin:0 0 9px;font:800 11px/1 ${FONT};letter-spacing:.15em;text-transform:uppercase;color:#F8981C;">${eyebrow}</p>
+  <h1 style="margin:0;font:800 28px/1.18 ${FONT};color:#101030;letter-spacing:-.01em;">${heading}</h1>${sub ? `
+  <p style="margin:9px 0 0;font:500 14px/1.5 ${FONT};color:#6b7280;">${sub}</p>` : ""}
+</div>`;
+const cohortPara = (html) =>
+  `<p style="margin:0 0 18px;font:400 16px/1.65 ${FONT};color:#374151;">${html}</p>`;
+const cohortButton = (label, url) =>
+  `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 22px;"><tbody><tr><td align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tbody><tr><td align="center" bgcolor="#F8981C" style="border-radius:10px;"><a href="${url}" style="display:inline-block;padding:15px 34px;font:800 14.5px/1 ${FONT};color:#101030;text-decoration:none;border-radius:10px;letter-spacing:.01em;">${label} →</a></td></tr></tbody></table></td></tr></tbody></table>`;
+const cohortTable = (title, rows) =>
+  `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 20px;border:1px solid #e5e7eb;border-radius:10px;border-collapse:separate;overflow:hidden;"><tbody>
+  <tr><td colspan="2" style="padding:11px 16px;background:#f4f7fb;font:700 11px/1 ${FONT};letter-spacing:.08em;text-transform:uppercase;color:#018BD4;border-bottom:1px solid #e5e7eb;">${title}</td></tr>
+  ${rows.map(([label, value], i) => `<tr><td width="42%" style="padding:11px 16px;font:500 13px/1.5 ${FONT};color:#6b7280;${i < rows.length - 1 ? "border-bottom:1px solid #eef0f5;" : ""}">${label}</td><td style="padding:11px 16px;font:600 13px/1.5 ${FONT};color:#101030;${i < rows.length - 1 ? "border-bottom:1px solid #eef0f5;" : ""}">${value}</td></tr>`).join("")}
+</tbody></table>`;
+const cohortChecklist = (title, items) =>
+  `<p style="margin:2px 0 10px;font:800 11px/1 ${FONT};letter-spacing:.1em;text-transform:uppercase;color:#F8981C;">${title}</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 20px;"><tbody>${items.map((it) => `<tr><td style="padding:4px 0;font:400 14px/1.55 ${FONT};color:#374151;"><span style="color:#018BD4;font-weight:700;">&#10003;</span>&nbsp;&nbsp;${it}</td></tr>`).join("")}</tbody></table>`;
+const cohortNote = (html) =>
+  `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;background:#f4f7fb;border-left:3px solid #018BD4;border-radius:6px;"><tbody><tr><td style="padding:14px 18px;font:400 13.5px/1.5 ${FONT};color:#374151;">${html}</td></tr></tbody></table>`;
+const cohortAmber = (html) =>
+  `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;background:#FFF8EE;border:1px solid #F8D9A6;border-radius:8px;"><tbody><tr><td style="padding:13px 16px;font:400 13px/1.5 ${FONT};color:#7A4A00;">${html}</td></tr></tbody></table>`;
+const cohortSignoff = (line, name) =>
+  `<p style="margin:24px 0 0;font:400 15px/1.6 ${FONT};color:#374151;">${line}<br><strong style="color:#101030;">${name}</strong></p>`;
+const firstNameOf = (name) => (name || "").trim().split(/\s+/)[0] || "there";
+
+// K1 — meeting/join link released to the cohort's learners.
+export async function sendJoinLinkEmail(recipient, ctx) {
+  const first = firstNameOf(recipient.name);
+  const dashboardUrl = `${env.FRONTEND_URL}/dashboard`;
+  const subject = `Your join link for ${ctx.courseName} is ready, ${first}`;
+  const text =
+    `Hi ${first},\n\n` +
+    `Your session link for ${ctx.courseName} (Cohort ${ctx.batchCode}) is now live. ` +
+    `Join every session of this cohort from your Invensis Learning dashboard:\n${dashboardUrl}\n\n` +
+    `Starts: ${ctx.startLine}\nTrainer: ${ctx.trainerName}\n\n` +
+    `See you in class,\nThe Invensis Learning Cohort Team`;
+  const contentHtml =
+    cohortHead("Cohort Logistics", `Your join link is here, ${first}`, `${ctx.courseName} · Cohort ${ctx.batchCode}`) +
+    cohortPara(`Your session link for <strong>${ctx.courseName}</strong> (Cohort ${ctx.batchCode}) is now live. Join every session of this cohort from your Invensis Learning dashboard.`) +
+    cohortButton("Go to my dashboard", dashboardUrl) +
+    cohortTable("Cohort details", [
+      ["Course", ctx.courseName],
+      ["Batch code", ctx.batchCode],
+      ["Starts", ctx.startLine],
+      ["Ends", ctx.endDate],
+      ["Format", ctx.format],
+      ["Trainer", ctx.trainerName],
+    ]) +
+    cohortChecklist("Before day 1", [
+      "Test your camera, mic and speakers",
+      "Join five minutes early on Day 1",
+      "Add all cohort dates to your calendar",
+    ]) +
+    cohortNote(`<strong>Something not working?</strong> Reply to this email and we'll sort it out.`) +
+    cohortSignoff("See you in class,", "The Invensis Learning Cohort Team");
+  return sendMail({
+    to: recipient.email,
+    subject,
+    text,
+    html: renderEmail({ subject, preheader: "Your session link for this cohort is live in your dashboard.", contentHtml }),
+  });
+}
+
+// K2 — trainer assigned to the training.
+export async function sendTrainerAssignedEmail(recipient, ctx) {
+  const first = firstNameOf(recipient.name);
+  const subject = `Your trainer for ${ctx.courseName} is assigned, ${first}`;
+  const text =
+    `Hi ${first},\n\n` +
+    `${ctx.trainerName} will be your trainer for ${ctx.courseName} (Cohort ${ctx.batchCode}). You'll meet them on Day 1.\n\n` +
+    `Have a question for the trainer? Reply and we'll pass it on before Day 1.\n\n` +
+    `See you soon,\nThe Invensis Learning Cohort Team`;
+  const contentHtml =
+    cohortHead("Trainer Update", `Your trainer is assigned, ${first}`, `${ctx.courseName} · Cohort ${ctx.batchCode}`) +
+    cohortPara(`<strong>${ctx.trainerName}</strong> will be your trainer for <strong>${ctx.courseName}</strong> (Cohort ${ctx.batchCode}). You'll meet them on Day 1.`) +
+    cohortNote(`<strong>Have a question for the trainer?</strong> Reply and we'll pass it on before Day 1.`) +
+    cohortSignoff("See you soon,", "The Invensis Learning Cohort Team");
+  return sendMail({
+    to: recipient.email,
+    subject,
+    text,
+    html: renderEmail({ subject, preheader: `${ctx.trainerName} will be your trainer for this cohort. You'll meet them on Day 1.`, contentHtml }),
+  });
+}
+
+// K3 — cohort rescheduled (dates moved).
+export async function sendCohortRescheduledEmail(recipient, ctx) {
+  const first = firstNameOf(recipient.name);
+  const dashboardUrl = `${env.FRONTEND_URL}/dashboard`;
+  const subject = `Your ${ctx.batchCode} cohort dates have moved, ${first}`;
+  const text =
+    `Hi ${first},\n\n` +
+    `The ${ctx.batchCode} cohort dates have moved.\n\n` +
+    `Previous dates: ${ctx.oldStart} → ${ctx.oldEnd}\n` +
+    `New dates: ${ctx.newStart} → ${ctx.newEnd}\n` +
+    `Reason: ${ctx.reason}\n\n` +
+    `Your enrolment, price, syllabus and dashboard access are unchanged. ` +
+    `View the updated schedule: ${dashboardUrl}\n\n` +
+    `New dates don't fit? Reply and we'll move you to another cohort, no fees.\n\n` +
+    `Thank you for your flexibility,\nThe Invensis Learning Cohort Team`;
+  const contentHtml =
+    cohortHead("Schedule Update", "Your cohort has been rescheduled", `${ctx.courseName} · Cohort ${ctx.batchCode}`) +
+    cohortAmber(`<strong>Heads up:</strong> your training dates have changed. Nothing else has.`) +
+    cohortPara(`Hi ${first},<br><br>The <strong>${ctx.batchCode}</strong> cohort dates have moved. Here's what's changed.`) +
+    cohortTable("What's changing", [
+      ["Previous dates", `<span style="color:#6b7280;text-decoration:line-through;">${ctx.oldStart} → ${ctx.oldEnd}</span>`],
+      ["New dates", `<span style="color:#018BD4;font-weight:700;">${ctx.newStart} → ${ctx.newEnd}</span>`],
+      ["Reason", ctx.reason],
+    ]) +
+    cohortChecklist("What stays the same", [
+      "Your enrolment and price",
+      "Your syllabus, materials and certificate on completion",
+      "Your dashboard access and learning resources",
+    ]) +
+    cohortButton("View updated schedule", dashboardUrl) +
+    cohortNote(`<strong>New dates don't fit?</strong> Reply and we'll move you to another cohort, no fees.`) +
+    cohortSignoff("Thank you for your flexibility,", "The Invensis Learning Cohort Team");
+  return sendMail({
+    to: recipient.email,
+    subject,
+    text,
+    html: renderEmail({ subject, preheader: "New dates, same course, same trainer — here's what changes.", contentHtml }),
+  });
 }
 
 export async function sendAccountSetupEmail(user, link) {
