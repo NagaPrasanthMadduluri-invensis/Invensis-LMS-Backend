@@ -74,6 +74,9 @@ export const userProfiles = pgTable("user_profiles", {
   timeZone: text("time_zone"),
   preferredLanguage: text("preferred_language"),
   companyName: text("company_name"),
+  // The learner's industry sector. Shown to trainers on the roster in place of
+  // the employer name, which they have no need to see.
+  industry: text("industry"),
   jobTitle: text("job_title"),
   department: text("department"),
   yearsExperience: integer("years_experience"),

@@ -172,30 +172,30 @@ export async function getTrainingDetail(userId, trainingRef) {
     .orderBy(trainingSessions.dayNumber);
 
   // Roster for this training. Professional profile only — a trainer sees who is
-  // enrolled, their background (company / experience / department / country) and
-  // their status, but NOT contact details (email/phone) or account state.
+  // enrolled, their background (industry / experience / department / country) and
+  // their status, but NOT contact details (email/phone), account state, or the
+  // employer name — the industry stands in for the company here.
   // Profile attributes have two sources: the `participants` row (from the xCRM
   // order) and `user_profiles` (what the learner filled in themselves). Prefer
-  // the participant row and fall back to the self-entered profile.
+  // the participant row and fall back to the self-entered profile. Industry is
+  // self-entered only — the xCRM order carries no industry.
   const roster = await db
     .select({
       enrolmentId: enrolments.id,
       participantId: participants.id,
       name: participants.name,
       jobTitle: participants.jobTitle,
-      company: participants.company,
       department: participants.department,
       experienceYears: participants.experienceYears,
       city: participants.city,
       country: participants.country,
       profileJobTitle: userProfiles.jobTitle,
-      profileCompany: userProfiles.companyName,
+      industry: userProfiles.industry,
       profileDepartment: userProfiles.department,
       profileExperienceYears: userProfiles.yearsExperience,
       profileCity: userProfiles.city,
       profileCountry: userProfiles.country,
       status: enrolments.status,
-      enrolledAt: enrolments.enrolledAt,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
@@ -244,14 +244,13 @@ export async function getTrainingDetail(userId, trainingRef) {
         participant_id: p.participantId,
         name: p.name,
         job_title: firstFilled(p.jobTitle, p.profileJobTitle),
-        company: firstFilled(p.company, p.profileCompany),
+        industry: p.industry ?? null,
         department: firstFilled(p.department, p.profileDepartment),
         experience_years: firstFilled(p.experienceYears, p.profileExperienceYears),
         city,
         country,
         location: [city, country].filter(Boolean).join(", ") || null,
         status: p.status,
-        enrolled_at: p.enrolledAt,
       };
     }),
   };
@@ -322,6 +321,31 @@ export async function updateSessionTopics(userId, sessionId, plannedTopics, ip) 
 /* ─────────────────────────────────────────────────────────
    Attendance — per-session marking by the assigned trainer.
    ───────────────────────────────────────────────────────── */
+// Once an admin marks a training `completed` (or `cancelled`) the attendance
+// register is closed — those are the two terminal statuses in the admin
+// lifecycle (admin.service.js TERMINAL_STATUSES) and a trainer must not be able
+// to change the record behind a signed-off training. Reads stay open.
+const ATTENDANCE_LOCKED_STATUSES = new Set(["completed", "cancelled"]);
+
+async function loadTrainingForSession(runner, trainingId) {
+  const [training] = await runner
+    .select({ id: trainingIds.id, status: trainingIds.status })
+    .from(trainingIds)
+    .where(eq(trainingIds.id, trainingId))
+    .limit(1);
+  if (!training) throw new AppError("Training not found", 404);
+  return training;
+}
+
+function assertAttendanceOpen(training) {
+  if (ATTENDANCE_LOCKED_STATUSES.has(training.status)) {
+    throw new AppError(
+      `This training is ${training.status} — attendance can no longer be changed. Ask an admin if it needs to be reopened.`,
+      409
+    );
+  }
+}
+
 
 // Roster for a session with each participant's current attendance (null = unmarked).
 export async function getSessionAttendance(userId, sessionId) {
@@ -332,6 +356,7 @@ export async function getSessionAttendance(userId, sessionId) {
     .limit(1);
   if (!session) throw new AppError("Session not found", 404);
   await assertAssigned(db, userId, session.trainingId);
+  const training = await loadTrainingForSession(db, session.trainingId);
 
   const roster = await db
     .select({ participantId: participants.id, name: participants.name, jobTitle: participants.jobTitle })
@@ -359,6 +384,9 @@ export async function getSessionAttendance(userId, sessionId) {
       end_time: session.endTime,
       status: session.status,
     },
+    // The portal disables the controls on this; the write endpoint enforces it.
+    training_status: training.status,
+    editable: !ATTENDANCE_LOCKED_STATUSES.has(training.status),
     participants: roster.map((p) => ({
       participant_id: p.participantId,
       name: p.name,
@@ -378,6 +406,7 @@ export async function markSessionAttendance(userId, sessionId, records, ip) {
       .limit(1);
     if (!session) throw new AppError("Session not found", 404);
     await assertAssigned(tx, userId, session.trainingId);
+    assertAttendanceOpen(await loadTrainingForSession(tx, session.trainingId));
 
     const enrolled = await tx
       .select({ participantId: enrolments.participantId })

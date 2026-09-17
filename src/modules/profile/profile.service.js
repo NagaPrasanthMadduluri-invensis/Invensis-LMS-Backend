@@ -11,9 +11,11 @@ const COLUMN = {
   last_name: "lastName",
   phone: "phone",
   country: "country",
+  city: "city",
   time_zone: "timeZone",
   preferred_language: "preferredLanguage",
   company_name: "companyName",
+  industry: "industry",
   job_title: "jobTitle",
   department: "department",
   years_experience: "yearsExperience",
@@ -27,9 +29,11 @@ function publicProfile(p) {
     last_name: p?.lastName ?? null,
     phone: p?.phone ?? null,
     country: p?.country ?? null,
+    city: p?.city ?? null,
     time_zone: p?.timeZone ?? null,
     preferred_language: p?.preferredLanguage ?? null,
     company_name: p?.companyName ?? null,
+    industry: p?.industry ?? null,
     job_title: p?.jobTitle ?? null,
     department: p?.department ?? null,
     years_experience: p?.yearsExperience ?? null,
@@ -96,6 +100,8 @@ export async function updateProfile(userId, body) {
     const partSet = { updatedAt: new Date() };
     if ("phone" in body) partSet.phone = body.phone;
     if ("job_title" in body) partSet.jobTitle = body.job_title;
+    if ("city" in body) partSet.city = body.city;
+    if ("country" in body) partSet.country = body.country;
     if (userSet.name) partSet.name = userSet.name;
     if (Object.keys(partSet).length > 1) {
       await tx.update(participants).set(partSet).where(eq(participants.userId, userId));

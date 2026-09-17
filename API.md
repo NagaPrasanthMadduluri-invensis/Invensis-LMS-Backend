@@ -882,9 +882,9 @@ Lists the trainings **currently assigned to the logged-in trainer** (derived fro
 
 Full detail for one training the trainer is assigned to, **including its sessions and the enrolled participants (roster)**. `:trainingRef` accepts the UUID or the code. Each session includes its **`id` (the `sessionId`)** — use it with `PATCH /api/trainer/sessions/:sessionId/topics` (§3.3.3).
 
-> **Roster privacy:** the `participants` array exposes each learner's **professional profile** — `name`, `job_title`, `company`, `department`, `experience_years`, `city`, `country`, `location` — plus enrolment `status`, `enrolled_at`, and the stable `participant_id` / `enrolment_id`. Trainers do **not** receive learner contact details (email/phone) or account state — that's admin-only (§3.2.11).
+> **Roster privacy:** the `participants` array exposes each learner's **professional profile** — `name`, `job_title`, `industry`, `department`, `experience_years`, `city`, `country`, `location` — plus enrolment `status` and the stable `participant_id` / `enrolment_id`. Trainers do **not** receive learner contact details (email/phone), account state, the **employer name**, or the enrolment date. The learner's `industry` stands in for their company here; the company name is admin-only (§3.2.11).
 >
-> Profile fields are sourced from the xCRM participant record, falling back to the learner's own `user_profiles` entry when the order didn't carry them. Any of them may be `null` when neither source has a value.
+> Profile fields are sourced from the xCRM participant record, falling back to the learner's own `user_profiles` entry when the order didn't carry them. `industry` is self-entered only — the xCRM order carries no industry, so it is `null` until the learner fills it in on their profile. Any of them may be `null` when neither source has a value.
 
 - **Auth:** Bearer access token · role `trainer` · must be currently assigned to this training
 - **`200` response:**
@@ -917,14 +917,13 @@ Full detail for one training the trainer is assigned to, **including its session
         "participant_id": "019ef7fe-e43a-7bb5-a70c-4339ab6b83f9",
         "name": "Learner User",
         "job_title": "Project Manager",
-        "company": "Acme Industries",
+        "industry": "Information Technology",
         "department": "Engineering",
         "experience_years": 7,
         "city": "Bengaluru",
         "country": "India",
         "location": "Bengaluru, India",
-        "status": "confirmed",
-        "enrolled_at": "2026-06-24T04:58:57.467Z"
+        "status": "confirmed"
       }
     ]
   }
@@ -1043,9 +1042,10 @@ The signed-in user's own profile. **Capability-based:** any authenticated user (
     "user": { "id": "019ef342-...", "name": "Lena Ng", "email": "lena@acme.test", "role": "learner", "is_active": true },
     "profile": {
       "first_name": "Lena", "last_name": "Ng",
-      "phone": "+91 90000 00001", "country": "India",
+      "phone": "+919000000001", "country": "India", "city": "Bengaluru",
       "time_zone": "Asia/Kolkata", "preferred_language": "en",
-      "company_name": "Acme", "job_title": "PM", "department": "Delivery",
+      "company_name": "Acme", "industry": "Information Technology",
+      "job_title": "PM", "department": "Delivery",
       "years_experience": 6, "linkedin_url": "https://linkedin.com/in/lena",
       "avatar_key": "avatars/019ef342-.../e90a....png",
       "avatar_url": "https://<r2>/lms-resources/avatars/...?X-Amz-Signature=..."
@@ -1057,10 +1057,10 @@ The signed-in user's own profile. **Capability-based:** any authenticated user (
 
 ### 3.5.2 `PATCH /api/me/profile`
 
-Update any subset of profile fields. **`email` is not accepted** (read-only). Send `null` to clear a field. Editing `first_name`/`last_name` re-syncs the account display `name` (and the linked participant record's name); editing `phone`/`job_title` syncs to the participant record too.
+Update any subset of profile fields. **`email` is not accepted** (read-only). Send `null` to clear a field. Editing `first_name`/`last_name` re-syncs the account display `name` (and the linked participant record's name); editing `phone`/`job_title`/`city`/`country` syncs to the participant record too.
 
 - **Auth:** Bearer access token
-- **Body (all optional, ≥1 required):** `first_name, last_name, phone, country, time_zone, preferred_language, company_name, job_title, department, years_experience` (int 0–80), `linkedin_url` (valid URL), `avatar_key`
+- **Body (all optional, ≥1 required):** `first_name, last_name, phone, country, city, time_zone, preferred_language, company_name, industry, job_title, department, years_experience` (int 0–80), `linkedin_url` (valid URL), `avatar_key`
 - **`200` response:** the same shape as §3.5.1 (updated).
 - **Errors:** `422` empty/invalid body (e.g. bad `linkedin_url`, out-of-range `years_experience`) · `401` no/invalid token
 
@@ -1234,12 +1234,15 @@ Submit a survey response. The caller must be an active participant in the survey
 
 Per-session, per-participant attendance. The **assigned trainer** marks it; a rollup writes each enrolment's overall `attendance_status` (`present | partial | absent`, used by the analytics). Per-session status is one of **`present | absent | late | excused`**; an unmarked participant reads `null`.
 
+> **The register closes with the training.** Once an admin sets the training to a terminal status — `completed` or `cancelled` (§ training status lifecycle) — the trainer can still **read** attendance but can no longer change it: `PUT` returns `409`. Reopening is an admin action.
+
 ### 3.8.1 `GET /api/trainer/sessions/:sessionId/attendance`
 
 Roster for a session with each participant's current status. Trainer must be assigned to the session's training.
 
 - **Auth:** Bearer · role `trainer` (+ assigned)
-- **`200`:** `{ "session": { "id", "day_number", "start_time", "end_time", "status" }, "participants": [ { "participant_id", "name", "job_title", "status": "present" | null } ] }`
+- **`200`:** `{ "session": { "id", "day_number", "start_time", "end_time", "status" }, "training_status": "active", "editable": true, "participants": [ { "participant_id", "name", "job_title", "status": "present" | null } ] }`
+- `editable` is `false` once `training_status` is `completed` or `cancelled` — the portal greys out the grid; §3.8.2 enforces it.
 - **Errors:** `404` session not found · `403` not assigned to this training
 
 ### 3.8.2 `PUT /api/trainer/sessions/:sessionId/attendance`
@@ -1249,7 +1252,7 @@ Bulk mark/update attendance (idempotent upsert; one record per participant per s
 - **Auth:** Bearer · role `trainer` (+ assigned)
 - **Body:** `{ "records": [ { "participant_id": "…", "status": "present" | "absent" | "late" | "excused" } ] }` (≥1)
 - **`200`:** `{ "session_id", "marked": <n>, "records": [ { "participant_id", "status" } ] }`
-- **Errors:** `422` invalid status / participant not enrolled in this training · `404` session not found · `403` not assigned
+- **Errors:** `409` the training is `completed`/`cancelled` — attendance is locked · `422` invalid status / participant not enrolled in this training · `404` session not found · `403` not assigned
 
 ### 3.8.3 `GET /api/admin/trainings/:trainingId/attendance`
 
