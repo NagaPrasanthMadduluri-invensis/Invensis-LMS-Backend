@@ -140,6 +140,11 @@ export const schedules = pgTable(
     sessionDates: jsonb("session_dates").notNull(), // ["2026-06-15", ...]
     venue: jsonb("venue"), // null for virtual
     timezone: text("timezone"),
+    // ISO 3166-1 alpha-2 of the country the schedule is offered in (e.g. "PH").
+    // The authoritative input for timezone resolution: `timezone` often holds a
+    // bare abbreviation ("CST") that maps to several IANA zones, whereas the
+    // country never does. See Client/components/trainer/timezone-converter.jsx.
+    countryCode: text("country_code"),
 
     isActive: boolean("is_active").notNull().default(true),
     createdBy: uuid("created_by").references(() => users.id), // null = system/CRM

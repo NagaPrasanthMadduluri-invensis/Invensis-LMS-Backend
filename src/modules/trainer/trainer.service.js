@@ -147,6 +147,7 @@ export async function getTrainingDetail(userId, trainingRef) {
         startTime: schedules.startTime,
         endTime: schedules.endTime,
         timezone: schedules.timezone,
+        countryCode: schedules.countryCode,
         batchType: schedules.batchType,
         venue: schedules.venue,
         durationHours: schedules.durationHours,
@@ -220,6 +221,9 @@ export async function getTrainingDetail(userId, trainingRef) {
     start_time: schedule?.startTime ?? null,
     end_time: schedule?.endTime ?? null,
     timezone: schedule?.timezone ?? null,
+    // Lets the portal resolve an unambiguous IANA zone when `timezone` is a
+    // bare abbreviation (CST = China, Taiwan and Mexico).
+    country_code: schedule?.countryCode ?? null,
     duration_hours: schedule?.durationHours ?? null,
     hours_per_day: schedule?.hoursPerDay ?? null,
     batch_type: schedule?.batchType ?? null,

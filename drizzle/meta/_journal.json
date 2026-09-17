@@ -148,6 +148,13 @@
       "when": 1788341903214,
       "tag": "0020_nostalgic_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789452346533,
+      "tag": "0021_add_schedule_country_code",
+      "breakpoints": true
     }
   ]
 }

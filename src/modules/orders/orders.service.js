@@ -84,6 +84,21 @@ async function generateTrainingCode(tx, year) {
   return `${prefix}${String(next).padStart(4, "0")}`;
 }
 
+/**
+ * ISO 3166-1 alpha-2 country of a schedule, from whichever shape the payload
+ * uses (`country_code`, `country.iso_code_2`, or a bare `country` string).
+ * Returns null when absent — callers fall back to the timezone abbreviation.
+ */
+function scheduleCountryCode(sch = {}) {
+  const raw =
+    sch.country_code ??
+    (typeof sch.country === "string" ? sch.country : sch.country?.iso_code_2) ??
+    null;
+  if (typeof raw !== "string") return null;
+  const code = raw.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : null;
+}
+
 export async function ingestOrder(actorId, payload, ip) {
   const paymentStatus = payload.order?.payment_status;
   if (paymentStatus !== "paid") {
@@ -137,6 +152,7 @@ export async function ingestOrder(actorId, payload, ip) {
           sessionDates: sch.session_dates,
           venue: sch.venue ?? null,
           timezone: sch.timezone ?? sch.timezone_code ?? null,
+          countryCode: scheduleCountryCode(sch),
           createdBy: actorId,
         })
         .returning();

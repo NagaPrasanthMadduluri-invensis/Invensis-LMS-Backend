@@ -29,6 +29,16 @@ const scheduleSchema = z
     duration_hours: z.number().optional(),
     hours_per_day: z.union([z.number(), z.string()]).optional(), // e.g. 8 or "8"
     timezone_code: z.string().optional(), // fallback for `timezone`
+    // Country the schedule is offered in. Either shape is accepted:
+    //   "country_code": "PH"                          (preferred)
+    //   "country": { "iso_code_2": "PH", ... }        (CMS schedule-listing shape)
+    //   "country": "PH"
+    // Used to resolve an unambiguous IANA zone — `timezone_code` alone can't
+    // (CST is China, Taiwan *and* Mexico).
+    country_code: z.string().optional(),
+    country: z
+      .union([z.string(), z.object({ iso_code_2: z.string().optional() }).passthrough()])
+      .optional(),
   })
   .passthrough();
 
