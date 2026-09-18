@@ -52,6 +52,48 @@ function computeDaysLeft(status, sessions) {
 // Accepts either a trainingIds UUID or the human code (e.g. "TRN-2026-0001").
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/*
+ * Training lifecycle states a learner is never shown.
+ *
+ * `cancelled` isn't happening and `suspended` is held indefinitely with no date
+ * to show — surfacing either just raises "when is this?" tickets. Everything
+ * else stays visible: pending/active/ongoing are ahead or running, `completed`
+ * is their history, and `postponed` IS still going to run (it's awaiting new
+ * dates), so hiding it would make a training the learner paid for vanish.
+ *
+ * Cancelled/transferred *enrolments* are filtered separately — that's the seat,
+ * not the training.
+ */
+const LEARNER_HIDDEN_TRAINING_STATUSES = ["cancelled", "suspended"];
+
+/**
+ * Add-ons purchased on an order, from the stored xCRM payload.
+ *
+ * `orders.payload.order.addon_items` is the CRM's own shape; only the fields the
+ * portal shows are pulled out, and anything nameless is dropped so the UI can
+ * treat a non-empty array as "there is something to display". Returns [] for a
+ * seat with no order, an order with no add-ons, or a payload that doesn't match
+ * the expected shape — the caller then falls back to the default messaging.
+ */
+async function listOrderAddons(orderId) {
+  if (!orderId) return [];
+  const [row] = await db
+    .select({ payload: orders.payload })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+
+  const items = row?.payload?.order?.addon_items;
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((a) => ({
+      name: a?.addon_name ?? a?.name ?? null,
+      quantity: a?.quantity ?? null,
+    }))
+    .filter((a) => a.name);
+}
+
 // All trainings the logged-in user is enrolled in — their "My Courses" list.
 // Scoped by the user's own enrolments (capability-based: any authenticated user
 // sees only their own), so no role gate is needed. Cancelled/transferred
@@ -103,7 +145,8 @@ export async function listMyTrainings(userId) {
     .where(
       and(
         eq(participants.userId, userId),
-        notInArray(enrolments.status, ["cancelled", "transferred"])
+        notInArray(enrolments.status, ["cancelled", "transferred"]),
+        notInArray(trainingIds.status, LEARNER_HIDDEN_TRAINING_STATUSES)
       )
     )
     .orderBy(asc(schedules.startDate), desc(enrolments.enrolledAt)); // by training date, ascending (nulls last)
@@ -143,22 +186,33 @@ export async function getTrainingDetail(userId, trainingRef) {
     .limit(1);
   if (!training) throw new AppError("Training not found", 404);
 
-  // Enrolment guard — the learner must have a confirmed enrolment.
+  // Enrolment guard — the learner must hold a live seat on this training.
+  //
+  // Deliberately the SAME predicate as `listMyTrainings`, not `status =
+  // 'confirmed'`: the list shows every non-cancelled seat including completed
+  // ones, so a narrower guard here means a training the learner can see but
+  // can't open. That is exactly what happened once completing a training began
+  // cascading its enrolments to 'completed' — every finished training 403'd.
   const enrolled = await db
-    .select({ id: enrolments.id })
+    .select({ id: enrolments.id, orderId: enrolments.orderId })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .where(
       and(
         eq(enrolments.trainingId, training.id),
         eq(participants.userId, userId),
-        eq(enrolments.status, "confirmed")
+        notInArray(enrolments.status, ["cancelled", "transferred"])
       )
     )
     .limit(1);
   if (enrolled.length === 0) {
     throw new AppError("You are not enrolled in this training", 403);
   }
+
+  // Add-ons bought with this seat (exam voucher, membership, …). They live on
+  // the order payload xCRM sent, not in a table of their own, so they're read
+  // from there for THIS learner's order only — never the training's other seats.
+  const addons = await listOrderAddons(enrolled[0].orderId);
 
   // Currently-assigned trainer (if any)
   const [trainer] = await db
@@ -222,6 +276,9 @@ export async function getTrainingDetail(userId, trainingRef) {
     course_slug: training.courseSlug ?? null,
     course_type: training.courseType ?? null,
     certification_included: training.certificationIncluded ?? null,
+    // What this learner actually bought alongside the seat. Non-empty means the
+    // UI shows the add-ons instead of the generic "not included" prompt.
+    addons,
     // schedule offering fields (fall back to training-level values when no schedule is linked)
     duration_hours: schedule?.durationHours ?? null,
     hours_per_day: schedule?.hoursPerDay ?? null,
@@ -354,7 +411,11 @@ export async function getDashboard(userId) {
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .where(
-      and(eq(participants.userId, userId), notInArray(enrolments.status, ["cancelled", "transferred"]))
+      and(
+        eq(participants.userId, userId),
+        notInArray(enrolments.status, ["cancelled", "transferred"]),
+        notInArray(trainingIds.status, LEARNER_HIDDEN_TRAINING_STATUSES)
+      )
     )
     .orderBy(desc(enrolments.enrolledAt));
 
@@ -710,7 +771,12 @@ export async function listSurveys(userId) {
     })
     .from(surveys)
     .innerJoin(trainingIds, eq(surveys.trainingId, trainingIds.id))
-    .where(inArray(surveys.trainingId, trainingIdList))
+    .where(
+      and(
+        inArray(surveys.trainingId, trainingIdList),
+        notInArray(trainingIds.status, LEARNER_HIDDEN_TRAINING_STATUSES)
+      )
+    )
     .orderBy(desc(surveys.assignedAt));
 
   const answered = await db
@@ -821,7 +887,8 @@ export async function listMyAttendance(userId) {
     .where(
       and(
         inArray(enrolments.participantId, participantIds),
-        notInArray(enrolments.status, ["cancelled", "transferred"])
+        notInArray(enrolments.status, ["cancelled", "transferred"]),
+        notInArray(trainingIds.status, LEARNER_HIDDEN_TRAINING_STATUSES)
       )
     );
   if (enrolled.length === 0) return { trainings: [] };

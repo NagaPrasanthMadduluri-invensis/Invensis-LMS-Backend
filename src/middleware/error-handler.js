@@ -17,7 +17,7 @@ export function errorHandler(err, req, res, _next) {
     if (err.status === 422) {
       req.log?.warn({ url: req.originalUrl }, err.message);
     }
-    return res.status(err.status).json({ message: err.message });
+    return res.status(err.status).json({ message: err.message, ...(err.details ?? {}) });
   }
   req.log?.error(err);
   res.status(500).json({ message: "Internal server error" });

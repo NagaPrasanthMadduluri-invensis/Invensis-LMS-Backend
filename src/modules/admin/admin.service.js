@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -217,7 +217,7 @@ export function computeDueForUpdate(status, endDate) {
  * suspended/postponed one). Rescheduling is a separate action (see below).
  * `completed`/`cancelled` are terminal — can't be changed once set.
  */
-export async function setTrainingStatus(adminId, trainingRef, { status, note }, ip) {
+export async function setTrainingStatus(adminId, trainingRef, { status, note, force = false }, ip) {
   const ALLOWED = new Set(["completed", "suspended", "active"]);
   if (!ALLOWED.has(status)) {
     throw new AppError("status must be one of: completed, suspended, active", 422);
@@ -229,6 +229,33 @@ export async function setTrainingStatus(adminId, trainingRef, { status, note }, 
     }
     if (training.status === status) {
       throw new AppError(`Training is already ${status}`, 409);
+    }
+
+    // Completing a training also completes the seats on it (below). Attendance
+    // is what says whether a learner actually attended, so an unmarked register
+    // means we'd be recording completions nobody verified. Refuse once with the
+    // counts, and let the admin re-send with `force` if they accept that.
+    let attendancePending = 0;
+    if (status === "completed") {
+      const [row] = await tx
+        .select({ n: sql`count(*) filter (where ${enrolments.attendanceStatus} = 'not_marked')::int` })
+        .from(enrolments)
+        .where(
+          and(
+            eq(enrolments.trainingId, training.id),
+            notInArray(enrolments.status, ["cancelled", "transferred"])
+          )
+        );
+      attendancePending = row?.n ?? 0;
+      if (attendancePending > 0 && !force) {
+        throw new AppError(
+          `Attendance is still pending for ${attendancePending} ${
+            attendancePending === 1 ? "learner" : "learners"
+          } on this training. Do you still want to mark it completed?`,
+          409,
+          { code: "attendance_pending", attendance_pending: attendancePending, can_force: true }
+        );
+      }
     }
 
     const now = new Date();
@@ -245,13 +272,39 @@ export async function setTrainingStatus(adminId, trainingRef, { status, note }, 
       })
       .where(eq(trainingIds.id, training.id));
 
+    // Completing the training completes the seats on it. Without this the
+    // enrolment stays 'confirmed' and every downstream view — the admin's
+    // participant detail, the learner's My Courses — still reads the training
+    // as upcoming. Cancelled/transferred seats are left alone: they were never
+    // going to complete, and transferred is superseded by its target enrolment.
+    let enrolmentsCompleted = 0;
+    if (status === "completed") {
+      const done = await tx
+        .update(enrolments)
+        .set({ status: "completed", updatedAt: now })
+        .where(
+          and(
+            eq(enrolments.trainingId, training.id),
+            notInArray(enrolments.status, ["cancelled", "transferred", "completed"])
+          )
+        )
+        .returning({ id: enrolments.id });
+      enrolmentsCompleted = done.length;
+    }
+
     await writeAudit(tx, {
       entityType: "training_id",
       entityId: training.id,
       action: `status_${status}`,
       actorId: adminId,
       before: { status: training.status },
-      after: { status, note: note ?? null },
+      after: {
+        status,
+        note: note ?? null,
+        ...(status === "completed"
+          ? { enrolments_completed: enrolmentsCompleted, attendance_pending: attendancePending, forced: !!force }
+          : {}),
+      },
       reason: note ?? null,
       ipAddress: ip,
     });
@@ -1317,9 +1370,14 @@ function enrolmentCategory(enrolStatus, trainingStatus) {
   if (enrolStatus === "cancelled") return "cancelled";
   if (enrolStatus === "transferred") return "transferred";
   if (enrolStatus === "failed") return "failed";
-  // status === 'confirmed' — split by where the training itself is
+  // status === 'confirmed' — fall back to where the TRAINING itself is. Every
+  // terminal/held training state has to be named here: anything unhandled would
+  // land on "upcoming", which is how a finished training used to show as still
+  // to come.
+  if (trainingStatus === "completed") return "completed";
+  if (trainingStatus === "cancelled") return "cancelled";
   if (trainingStatus === "ongoing") return "ongoing";
-  return "upcoming";
+  return "upcoming"; // pending / active / postponed / suspended — still ahead
 }
 
 // Full profile for a single participant plus every training they enrolled in,

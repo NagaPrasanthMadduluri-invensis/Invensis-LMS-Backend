@@ -17,6 +17,9 @@ export const updateTrainingSchema = z
 export const setTrainingStatusSchema = z.object({
   status: z.enum(["completed", "suspended", "active"]),
   note: z.string().trim().max(1000).optional(),
+  // Completing a training whose attendance is still unmarked is refused with a
+  // 409 the first time; the admin re-sends with `force: true` to go ahead.
+  force: z.boolean().optional(),
 });
 
 // Postpone + reschedule. HH:MM or HH:MM:SS times.
