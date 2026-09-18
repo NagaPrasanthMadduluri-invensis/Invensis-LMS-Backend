@@ -37,8 +37,9 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendMail({ to, subject, text, html }) {
+async function sendMail({ to, cc, subject, text, html }) {
   const msg = { from: env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html };
+  if (cc) msg.cc = cc; // optional CC (e.g. a learner's sponsor on info emails)
   await getTransporter().sendMail(msg);
   return msg;
 }
@@ -180,6 +181,7 @@ export async function sendJoinLinkEmail(recipient, ctx) {
     cohortSignoff("See you in class,", "The Invensis Learning Cohort Team");
   return sendMail({
     to: recipient.email,
+    cc: recipient.cc, // learner's sponsor, when available (undefined otherwise)
     subject,
     text,
     html: renderEmail({ subject, preheader: "Your session link for this cohort is live in your dashboard.", contentHtml }),
@@ -202,6 +204,7 @@ export async function sendTrainerAssignedEmail(recipient, ctx) {
     cohortSignoff("See you soon,", "The Invensis Learning Cohort Team");
   return sendMail({
     to: recipient.email,
+    cc: recipient.cc, // learner's sponsor, when available (undefined otherwise)
     subject,
     text,
     html: renderEmail({ subject, preheader: `${ctx.trainerName} will be your trainer for this cohort. You'll meet them on Day 1.`, contentHtml }),
@@ -242,6 +245,7 @@ export async function sendCohortRescheduledEmail(recipient, ctx) {
     cohortSignoff("Thank you for your flexibility,", "The Invensis Learning Cohort Team");
   return sendMail({
     to: recipient.email,
+    cc: recipient.cc, // learner's sponsor, when available (undefined otherwise)
     subject,
     text,
     html: renderEmail({ subject, preheader: "New dates, same course, same trainer — here's what changes.", contentHtml }),

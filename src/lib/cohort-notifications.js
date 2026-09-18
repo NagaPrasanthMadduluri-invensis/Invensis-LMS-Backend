@@ -6,7 +6,8 @@
  * thrown, so it can't roll back the action that caused it. Each recipient is
  * sent independently; one bad address doesn't stop the rest.
  */
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "../config/db.js";
 import {
   schedules,
@@ -16,7 +17,11 @@ import {
   users,
   enrolments,
   participants,
+  orders,
 } from "../db/schema.js";
+
+// Aliased users row for the sponsor side of the learner → order → buyer join.
+const sponsorUsers = alias(users, "sponsor_users");
 import {
   sendJoinLinkEmail,
   sendTrainerAssignedEmail,
@@ -44,13 +49,23 @@ const logFail = (kind, email, err) =>
 
 // Confirmed learners on a training, de-duplicated by email.
 async function getEnrolledLearners(trainingId) {
+  // Each learner's sponsor = the buyer of their enrolment's order, excluding a
+  // self-purchase (sponsor is the same user). Attached as `cc` so info emails
+  // keep the sponsor in the loop; null when there's no order or it's self-bought.
   const rows = await db
-    .select({ name: participants.name, email: participants.email })
+    .select({ name: participants.name, email: participants.email, cc: sponsorUsers.email })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .leftJoin(orders, eq(orders.id, enrolments.orderId))
+    .leftJoin(
+      sponsorUsers,
+      and(eq(sponsorUsers.id, orders.sponsorUserId), ne(sponsorUsers.id, participants.userId))
+    )
     .where(and(eq(enrolments.trainingId, trainingId), eq(enrolments.status, "confirmed")));
   const seen = new Set();
-  return rows.filter((r) => r.email && !seen.has(r.email) && seen.add(r.email));
+  return rows
+    .filter((r) => r.email && !seen.has(r.email) && seen.add(r.email))
+    .map((r) => ({ name: r.name, email: r.email, cc: r.cc || undefined }));
 }
 
 async function trainingCore(trainingId) {
