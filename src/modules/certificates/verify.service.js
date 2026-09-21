@@ -54,6 +54,7 @@ export async function verifyCertificate(rawCode, rawName) {
       deliveryMode: trainingIds.deliveryMode,
       trainingStatus: trainingIds.status,
       courseType: courses.courseType,
+      certificationIncluded: courses.certificationIncluded,
       startDate: schedules.startDate,
       endDate: schedules.endDate,
       sessionDates: schedules.sessionDates,
@@ -110,6 +111,21 @@ export async function verifyCertificate(rawCode, rawName) {
       end_date: row.endDate ?? null,
       issued_at: row.issuedAt,
       is_certification: row.courseType === "certification",
+      /*
+       * Certificate of Training vs Letter of Course Attendance.
+       *
+       * When a certification course INCLUDES the certification, the awarding
+       * body (PMI, PeopleCert, …) issues the qualification — Invensis can only
+       * attest that the learner attended, not that they achieved anything. So
+       * `course_type = certification AND certification_included` is an
+       * attendance letter; everything else is a Certificate of Training.
+       *
+       * Both values come from the course catalog, synced from the CMS.
+       */
+      credential_type:
+        row.courseType === "certification" && row.certificationIncluded === true
+          ? "attendance_letter"
+          : "certificate",
       // Revoking clears released_at, so anything returned here is live.
       status: "active",
       verified_at: new Date().toISOString(),

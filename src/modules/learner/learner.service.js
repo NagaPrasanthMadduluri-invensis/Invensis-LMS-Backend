@@ -625,8 +625,9 @@ async function findEligibleEnrolment(userId, trainingRef) {
       certPdus: certificates.pdus,
       certPduClaimCode: certificates.pduClaimCode,
       certMode: certificates.certificateMode,
-      // Course catalog drives the PMI logo on a certification certificate.
+      // Course catalog drives the PMI logo and the credential type.
       courseType: courses.courseType,
+      certificationIncluded: courses.certificationIncluded,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
@@ -666,6 +667,19 @@ function certificateDto(r) {
     mode_of_training: modeOfTraining(r.deliveryMode, r.certMode),
     // Certification courses print the PMI logo and registered mark.
     is_certification: r.courseType === "certification",
+    /*
+     * Which document the learner actually gets.
+     *
+     * A certification course that INCLUDES the certification is examined by the
+     * awarding body, so Invensis can attest attendance only — that learner gets
+     * a Letter of Course Attendance, not a Certificate of Training. Same rule as
+     * the public verification page, so the printed document and its verification
+     * can never disagree.
+     */
+    credential_type:
+      r.courseType === "certification" && r.certificationIncluded === true
+        ? "attendance_letter"
+        : "certificate",
     start_date: r.startDate,
     end_date: r.endDate,
     session_dates: r.sessionDates ?? null,
@@ -716,8 +730,9 @@ export async function listCertificates(userId) {
       certPdus: certificates.pdus,
       certPduClaimCode: certificates.pduClaimCode,
       certMode: certificates.certificateMode,
-      // Course catalog drives the PMI logo on a certification certificate.
+      // Course catalog drives the PMI logo and the credential type.
       courseType: courses.courseType,
+      certificationIncluded: courses.certificationIncluded,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
