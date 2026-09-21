@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import {
   issueCertificate,
-  generateCertificateCode,
-  activityCodeFor,
+  courseIdentifierFor,
+  modeOfTraining,
+  nextCertificateCode,
 } from "../../lib/certificates.js";
 import { env } from "../../config/env.js";
 import { listSchedules } from "../cms/cms.service.js";
@@ -16,6 +17,7 @@ import {
   participants,
   enrolments,
   certificates,
+  courses,
   surveys,
   surveyResponses,
   attendanceRecords,
@@ -115,9 +117,11 @@ export async function listMyTrainings(userId) {
       // Who paid — 'self' vs 'corporate'; the buyer's email is resolved below.
       sponsorship: enrolments.sponsorship,
       // Certificate is one-to-one with the enrolment (unique enrolment_id), so a
-      // left join can't fan out the row. Present == survey submitted / issued.
+      // left join can't fan out the row. A row existing is NOT enough to show
+      // it — `releasedAt` decides, see the mapping below.
       certificateId: certificates.certificateCode,
       certificateIssuedAt: certificates.issuedAt,
+      certificateReleasedAt: certificates.releasedAt,
       // Currently-assigned trainer for the training (most recent active
       // assignment). Correlated subquery to avoid multiplying enrolment rows.
       trainerName: sql`(
@@ -167,9 +171,12 @@ export async function listMyTrainings(userId) {
       trainer_name: r.trainerName ?? null,
       sponsorship: r.sponsorship ?? null,
       sponsor_email: r.sponsorEmail ?? null,
-      certificate_id: r.certificateId ?? null,
-      certificate_issued: !!r.certificateId,
-      certificate_issued_at: r.certificateIssuedAt ?? null,
+      // Released is the gate, not merely generated — and the code is withheld
+      // until then, since it identifies a valid certificate.
+      certificate_id: r.certificateReleasedAt ? r.certificateId ?? null : null,
+      certificate_issued: !!r.certificateId && !!r.certificateReleasedAt,
+      certificate_awaiting_release: !!r.certificateId && !r.certificateReleasedAt,
+      certificate_issued_at: r.certificateReleasedAt ? r.certificateIssuedAt ?? null : null,
     })),
   };
 }
@@ -603,17 +610,30 @@ async function findEligibleEnrolment(userId, trainingRef) {
       deliveryMode: trainingIds.deliveryMode,
       startDate: schedules.startDate,
       endDate: schedules.endDate,
-      eventCode: schedules.externalScheduleCode,
+      eventCode: schedules.externalEventCode,
+      eventId: schedules.externalEventId,
+      // The actual days the training ran. A reschedule can leave gaps, so the
+      // certificate lists them rather than implying an unbroken range.
+      sessionDates: schedules.sessionDates,
       participantName: participants.name,
       certCode: certificates.certificateCode,
       certActivity: certificates.activityCode,
       issuedAt: certificates.issuedAt,
+      certId: certificates.id,
+      releasedAt: certificates.releasedAt,
+      learnerNameOverride: certificates.learnerNameOverride,
+      certPdus: certificates.pdus,
+      certPduClaimCode: certificates.pduClaimCode,
+      certMode: certificates.certificateMode,
+      // Course catalog drives the PMI logo on a certification certificate.
+      courseType: courses.courseType,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .leftJoin(courses, eq(courses.slug, trainingIds.courseSlug))
     .where(
       and(
         eq(participants.userId, userId),
@@ -627,19 +647,43 @@ async function findEligibleEnrolment(userId, trainingRef) {
 
 // Shape the render/list payload for one certificate row.
 function certificateDto(r) {
-  const issued = !!r.certCode;
+  // Generated (a row exists) and released (an admin made it visible) are
+  // different things. `issued` is the learner-facing "can I download this?"
+  // flag and now needs BOTH — a generated-but-unreleased certificate must look
+  // the same to the learner as one that does not exist yet.
+  const generated = !!r.certCode;
+  const released = !!r.releasedAt;
+  const issued = generated && released;
   return {
     training_id: r.trainingId,
     training_code: r.code,
+    // Course name and dates always come from the training — only the learner's
+    // name is correctable, so a certificate can never disagree with the
+    // training it certifies.
     title: r.title, // course name printed on the certificate
     delivery_mode: r.deliveryMode,
+    // "…which took place on 5th and 6th September 2026, via online classroom."
+    mode_of_training: modeOfTraining(r.deliveryMode, r.certMode),
+    // Certification courses print the PMI logo and registered mark.
+    is_certification: r.courseType === "certification",
     start_date: r.startDate,
     end_date: r.endDate,
-    participant_name: r.participantName,
-    activity_id: r.certActivity ?? activityCodeFor(r.eventCode, r.code),
-    certificate_id: r.certCode ?? null,
-    issued, // survey submitted → certificate unlocked/downloadable
-    issued_at: r.issuedAt ?? null,
+    session_dates: r.sessionDates ?? null,
+    participant_name: r.learnerNameOverride ?? r.participantName,
+    // Footer, named as printed: Training ID / Certificate ID / Course
+    // Identifier / PDU Claim Code.
+    training_id: r.code,
+    course_identifier:
+      r.certActivity ??
+      courseIdentifierFor({ eventCode: r.eventCode, eventId: r.eventId, trainingCode: r.code }),
+    pdus: issued ? r.certPdus ?? null : null,
+    pdu_claim_code: issued ? r.certPduClaimCode ?? null : null,
+    // The code identifies a valid certificate, so it is withheld until release.
+    certificate_id: issued ? r.certCode : null,
+    issued, // generated AND released → downloadable
+    awaiting_release: generated && !released,
+    issued_at: issued ? r.issuedAt ?? null : null,
+    released_at: r.releasedAt ?? null,
     completed_at: r.enrolmentUpdatedAt ?? r.endDate ?? null,
   };
 }
@@ -657,17 +701,30 @@ export async function listCertificates(userId) {
       deliveryMode: trainingIds.deliveryMode,
       startDate: schedules.startDate,
       endDate: schedules.endDate,
-      eventCode: schedules.externalScheduleCode,
+      eventCode: schedules.externalEventCode,
+      eventId: schedules.externalEventId,
+      // The actual days the training ran. A reschedule can leave gaps, so the
+      // certificate lists them rather than implying an unbroken range.
+      sessionDates: schedules.sessionDates,
       participantName: participants.name,
       certCode: certificates.certificateCode,
       certActivity: certificates.activityCode,
       issuedAt: certificates.issuedAt,
+      certId: certificates.id,
+      releasedAt: certificates.releasedAt,
+      learnerNameOverride: certificates.learnerNameOverride,
+      certPdus: certificates.pdus,
+      certPduClaimCode: certificates.pduClaimCode,
+      certMode: certificates.certificateMode,
+      // Course catalog drives the PMI logo on a certification certificate.
+      courseType: courses.courseType,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .leftJoin(courses, eq(courses.slug, trainingIds.courseSlug))
     .where(
       and(
         eq(participants.userId, userId),
@@ -687,6 +744,24 @@ export async function getCertificate(userId, trainingRef) {
   if (!row.certCode) {
     throw new AppError("Complete the feedback survey to unlock your certificate", 403);
   }
+  if (!row.releasedAt) {
+    throw new AppError(
+      "Your certificate is being prepared. It becomes available once the training team releases it.",
+      403
+    );
+  }
+
+  // Fetching the printable certificate IS the download — this endpoint exists
+  // only to render/print it. Counted after the gate, so a blocked attempt never
+  // inflates the number the admin sees.
+  await db
+    .update(certificates)
+    .set({
+      downloadCount: sql`${certificates.downloadCount} + 1`,
+      lastDownloadedAt: new Date(),
+    })
+    .where(eq(certificates.id, row.certId));
+
   return { certificate: certificateDto(row) };
 }
 
@@ -700,8 +775,20 @@ export async function issueCertificateWithSurvey(userId, trainingRef, responses)
   // Already issued → return as-is (don't overwrite the recorded survey).
   if (row.certCode) return { certificate: certificateDto(row) };
 
-  const activityCode = activityCodeFor(row.eventCode, row.code);
-  const certificateCode = generateCertificateCode(row.enrolmentId);
+  const activityCode = courseIdentifierFor({
+    eventCode: row.eventCode,
+    eventId: row.eventId,
+    trainingCode: row.code,
+  });
+  const certificateCode = await nextCertificateCode(db);
+
+  // PDUs are set on the training by an admin; snapshot whatever is set now so
+  // this certificate keeps printing the figure it was issued with.
+  const [t] = await db
+    .select({ pdus: trainingIds.pdus, pduClaimCode: trainingIds.pduClaimCode })
+    .from(trainingIds)
+    .where(eq(trainingIds.id, row.trainingId))
+    .limit(1);
 
   const [created] = await db
     .insert(certificates)
@@ -709,6 +796,8 @@ export async function issueCertificateWithSurvey(userId, trainingRef, responses)
       enrolmentId: row.enrolmentId,
       certificateCode,
       activityCode,
+      pdus: t?.pdus ?? null,
+      pduClaimCode: t?.pduClaimCode ?? null,
       surveyResponses: responses,
     })
     .onConflictDoNothing({ target: certificates.enrolmentId })
@@ -718,7 +807,13 @@ export async function issueCertificateWithSurvey(userId, trainingRef, responses)
   const issued =
     created ??
     (await db
-      .select({ certificateCode: certificates.certificateCode, activityCode: certificates.activityCode, issuedAt: certificates.issuedAt })
+      .select({
+        certificateCode: certificates.certificateCode,
+        activityCode: certificates.activityCode,
+        issuedAt: certificates.issuedAt,
+        id: certificates.id,
+        releasedAt: certificates.releasedAt,
+      })
       .from(certificates)
       .where(eq(certificates.enrolmentId, row.enrolmentId))
       .limit(1))[0];
@@ -729,6 +824,9 @@ export async function issueCertificateWithSurvey(userId, trainingRef, responses)
       certCode: issued.certificateCode,
       certActivity: issued.activityCode,
       issuedAt: issued.issuedAt,
+      certId: issued.id ?? null,
+      // A freshly created certificate is never released — the admin does that.
+      releasedAt: issued.releasedAt ?? null,
     }),
   };
 }
@@ -863,7 +961,12 @@ export async function submitSurveyResponse(userId, surveyId, answers, ip) {
       id: inserted[0].id,
       survey_id: surveyId,
       submitted_at: inserted[0].submittedAt,
-      certificate_issued: certificateIssued,
+      // The survey GENERATES the certificate; an admin still has to release it
+      // before the learner can see it. Reporting `certificate_issued: true`
+      // here would promise a download that the gate then refuses.
+      certificate_generated: certificateIssued,
+      certificate_issued: false,
+      certificate_awaiting_release: certificateIssued,
     };
   });
 }

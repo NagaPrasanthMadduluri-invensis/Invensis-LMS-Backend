@@ -14,6 +14,8 @@ import sponsorRoutes from "./modules/sponsor/sponsor.routes.js";
 import reportsRoutes from "./modules/reports/reports.routes.js";
 import cmsRoutes from "./modules/cms/cms.routes.js";
 import coursesRoutes from "./modules/courses/courses.routes.js";
+import adminCertificateRoutes from "./modules/certificates/certificates.routes.js";
+import verifyRoutes from "./modules/certificates/verify.routes.js";
 import { notFound, errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -35,6 +37,11 @@ app.get("/api/health", (_req, res) =>
 
 app.use("/api/auth", authRoutes);
 app.use("/api/learner", learnerRoutes);
+// Mounted ahead of adminRoutes so /admin/certificates/* resolves here rather
+// than falling through to the generic admin router's 404.
+// Public certificate verification (no auth) — reached from a certificate QR.
+app.use("/api/verify", verifyRoutes);
+app.use("/api/admin/certificates", adminCertificateRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/trainer", trainerRoutes);
 app.use("/api/orders", ordersRoutes);

@@ -125,6 +125,11 @@ export const schedules = pgTable(
     // xCRM traceability (null for manually created schedules)
     externalScheduleCode: text("external_schedule_code"), // e.g. "INL000006"
     externalEventId: integer("external_event_id"),
+    /* The CMS event code exactly as sent ("INL069541"). Printed on the
+       certificate as "Course Identifier". Stored rather than derived because
+       the CMS owns the format; `externalScheduleCode` is the schedule id
+       ("1028455") and is NOT the same value. */
+    externalEventCode: text("external_event_code"),
     externalVariantId: integer("external_variant_id"),
 
     title: text("title").notNull(),
@@ -173,6 +178,18 @@ export const trainingIds = pgTable(
     bucket: bucketEnum("bucket").notNull(),
     deliveryMode: deliveryModeEnum("delivery_mode").notNull(),
     status: trainingStatusEnum("status").notNull().default("pending"),
+    /* PDUs awarded and the PMI claim code, entered by an admin once per
+       training. NOT derived from duration: contact hours and PDUs are
+       different measures and a course can award either more or fewer. */
+    pdus: integer("pdus"),
+    pduClaimCode: text("pdu_claim_code"),
+    /* How the training ran, as it should READ on the certificate
+       ("…via online classroom."). Admin-set and stored separately from
+       `deliveryMode`: delivery_mode is the operational routing value, while
+       this is certificate wording, and the two legitimately differ — a
+       `virtual` training may be certified as "Live virtual class". Null falls
+       back to wording derived from deliveryMode. */
+    certificateMode: text("certificate_mode"),
     capacity: integer("capacity").notNull(),
     minSeats: integer("min_seats").notNull(),
     minSeatsOverride: boolean("min_seats_override").notNull().default(false),
@@ -372,6 +389,37 @@ export const certificates = pgTable("certificates", {
   activityCode: text("activity_code"), // schedule event code snapshot (falls back to training code)
   surveyResponses: jsonb("survey_responses").notNull(),
   issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+
+  /* ── Admin release gate ──────────────────────────────────
+     Issuing and releasing are separate steps. A row exists once the
+     certificate is generated, but the learner sees nothing until an admin
+     releases it. `releasedAt` null = withheld; revoking sets it back to null. */
+  releasedAt: timestamp("released_at", { withTimezone: true }),
+  releasedBy: uuid("released_by").references(() => users.id),
+
+  /* ── Download tracking ───────────────────────────────────
+     Counted on the learner's printable-certificate fetch, so the admin can see
+     whether a released certificate was actually collected. */
+  downloadCount: integer("download_count").notNull().default(0),
+  lastDownloadedAt: timestamp("last_downloaded_at", { withTimezone: true }),
+
+  /* ── PDU snapshot ────────────────────────────────────────
+     Copied from the training when the certificate is generated. Snapshotted,
+     not joined: a certificate already in a learner's hands must keep printing
+     the PDUs it was issued with, even if the training's value is corrected
+     later for future cohorts. */
+  pdus: integer("pdus"),
+  pduClaimCode: text("pdu_claim_code"),
+  // Snapshot of the training's certificate wording at issue time.
+  certificateMode: text("certificate_mode"),
+
+  /* ── Admin override ──────────────────────────────────────
+     Only the learner's name is correctable here, for a misspelling that must
+     not rewrite the participant record analytics read. Course title and the
+     session dates are deliberately NOT overridable — they come from the
+     training, so one certificate can never disagree with the training it
+     certifies. Null = use the joined value. */
+  learnerNameOverride: text("learner_name_override"),
 });
 
 /* ── surveys (pre/post-training feedback forms) ────────────

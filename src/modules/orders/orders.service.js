@@ -136,6 +136,9 @@ export async function ingestOrder(actorId, payload, ip) {
         .values({
           externalScheduleCode: scheduleCode,
           externalEventId: sch.event_id ?? null,
+          // Printed on the certificate as "Course Identifier". Distinct from
+          // `schedule_id`, which is the schedule's own numeric id.
+          externalEventCode: sch.event_code ?? null,
           externalVariantId: sch.schedule_variant_id ?? null,
           title: payload.course.course_name,
           bucket: mapBucket(payload.order?.purchase_type),

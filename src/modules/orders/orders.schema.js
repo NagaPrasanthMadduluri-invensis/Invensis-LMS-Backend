@@ -16,6 +16,7 @@ const scheduleSchema = z
   .object({
     schedule_id: z.string(), // external code, e.g. "INL000006"
     event_id: z.number().optional(),
+    event_code: z.string().optional(), // "INL069541" — printed as Course Identifier
     schedule_variant_id: z.number().optional(),
     batch_type: z.string().optional(),
     delivery_format: z.string().optional(),

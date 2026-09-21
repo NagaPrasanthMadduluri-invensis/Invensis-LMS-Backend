@@ -1,0 +1,1 @@
+ALTER TABLE "schedules" ADD COLUMN "external_event_code" text;
