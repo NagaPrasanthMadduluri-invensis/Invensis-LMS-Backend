@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-or
 import {
   issueCertificate,
   courseIdentifierFor,
+  credentialTypeFor,
   modeOfTraining,
   nextCertificateCode,
 } from "../../lib/certificates.js";
@@ -111,9 +112,23 @@ export async function listMyTrainings(userId) {
       meetingReleased: trainingIds.meetingReleased,
       enrolmentStatus: enrolments.status,
       enrolledAt: enrolments.enrolledAt,
+      /* Course facts decide which document this training yields, so the card
+         can say so up front rather than leaving a learner to find out at the
+         end. Read from the catalog (the CMS's own answer), falling back to the
+         snapshot taken on the training when the catalog row is missing. */
+      courseType: sql`COALESCE(${courses.courseType}, ${trainingIds.courseType})`,
+      certificationIncluded: sql`COALESCE(${courses.certificationIncluded}, ${trainingIds.certificationIncluded})`,
       startDate: schedules.startDate,
       endDate: schedules.endDate,
+      startTime: schedules.startTime,
+      endTime: schedules.endTime,
       timezone: schedules.timezone,
+      // The learning load, shown on the card so it can be judged before opening
+      // the training: total hours, hours a day, and how many days actually have
+      // a session — a 08→18 Oct range is 11 days but only 8 of them are taught.
+      durationHours: schedules.durationHours,
+      hoursPerDay: schedules.hoursPerDay,
+      sessionDates: schedules.sessionDates,
       // Who paid — 'self' vs 'corporate'; the buyer's email is resolved below.
       sponsorship: enrolments.sponsorship,
       // Certificate is one-to-one with the enrolment (unique enrolment_id), so a
@@ -146,6 +161,7 @@ export async function listMyTrainings(userId) {
     .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
     .leftJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .leftJoin(courses, eq(courses.slug, trainingIds.courseSlug))
     .where(
       and(
         eq(participants.userId, userId),
@@ -164,8 +180,21 @@ export async function listMyTrainings(userId) {
       status: r.status,
       start_date: r.startDate,
       end_date: r.endDate,
+      start_time: r.startTime,
+      end_time: r.endTime,
       timezone: r.timezone,
+      duration_hours: r.durationHours ?? null,
+      hours_per_day: r.hoursPerDay ?? null,
+      session_days: Array.isArray(r.sessionDates) ? r.sessionDates.length : null,
       enrolment_status: r.enrolmentStatus,
+      // Is this a certification course, and which document does it yield? Same
+      // resolution the public verification page uses, so the two agree.
+      is_certification: r.courseType === "certification",
+      certification_included: r.certificationIncluded === true,
+      credential_type: credentialTypeFor({
+        courseType: r.courseType,
+        certificationIncluded: r.certificationIncluded,
+      }),
       meeting_released: r.meetingReleased,
       enrolled_at: r.enrolledAt,
       trainer_name: r.trainerName ?? null,

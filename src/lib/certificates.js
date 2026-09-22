@@ -79,6 +79,29 @@ export function modeOfTraining(deliveryMode, certificateMode = null) {
  * Stored on `certificates.activity_code` for historical reasons; the printed
  * label is Course Identifier, not Activity ID.
  */
+/**
+ * Which document a training yields: a Certificate of Training, or a Letter of
+ * Course Attendance.
+ *
+ * When a certification course INCLUDES the certification, the awarding body
+ * (PMI, PeopleCert, …) issues the qualification — Invensis can only attest that
+ * the learner attended, never that they achieved anything. So
+ * `course_type = certification AND certification_included` yields an attendance
+ * letter; everything else yields a Certificate of Training.
+ *
+ * Both inputs come from the course catalog, synced from the CMS. This is the
+ * single home for the rule: the public verification page, the learner's own
+ * training list and the generated PDF must never disagree about what a learner
+ * is being given.
+ *
+ * @returns {"attendance_letter" | "certificate"}
+ */
+export function credentialTypeFor({ courseType, certificationIncluded } = {}) {
+  return courseType === "certification" && certificationIncluded === true
+    ? "attendance_letter"
+    : "certificate";
+}
+
 export function courseIdentifierFor({ eventCode, eventId, trainingCode } = {}) {
   if (eventCode) return eventCode;
   if (eventId != null && Number.isFinite(Number(eventId))) {
