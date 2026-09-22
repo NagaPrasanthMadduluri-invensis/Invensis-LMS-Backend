@@ -19,7 +19,7 @@ import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { hashPassword } from "../../lib/password.js";
 import { provisionAccountSetup, sendAccountSetupLink } from "../../lib/account-setup.js";
-import { issueCertificate } from "../../lib/certificates.js";
+import { courseIdentifierFor, issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import {
   notifyJoinLinkReleased,
@@ -574,6 +574,10 @@ export async function listTrainings() {
       endDate: schedules.endDate,
       durationHours: schedules.durationHours,
       timezone: schedules.timezone,
+      // The CMS event code ("INL000055"), shown on the card beside the Training
+      // ID so an admin can tie a training back to the schedule in the CMS.
+      externalEventCode: schedules.externalEventCode,
+      externalEventId: schedules.externalEventId,
       trainerName: users.name,
     })
     .from(trainingIds)
@@ -587,7 +591,17 @@ export async function listTrainings() {
     )
     .leftJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
     .leftJoin(users, eq(trainers.userId, users.id))
-    .orderBy(asc(schedules.startDate), desc(trainingIds.createdAt)); // by training date, ascending (nulls last)
+    /* Newest training first — the admin's working set is the cohorts running
+       now and next, not the ones that finished last year.
+
+       `NULLS LAST` is not optional: Postgres sorts NULLs FIRST on DESC, so a
+       training whose schedule has no start date would otherwise head the list
+       ahead of every real one. `createdAt` breaks ties so same-day cohorts keep
+       a stable, meaningful order. */
+    .orderBy(
+      sql`${schedules.startDate} DESC NULLS LAST`,
+      desc(trainingIds.createdAt)
+    );
 
   return {
     trainings: rows.map((r) => ({
@@ -595,6 +609,11 @@ export async function listTrainings() {
       code: r.code,
       title: r.title,
       status: r.status,
+      /* Same resolution the certificate's "Course Identifier" uses — the stored
+         code when the CMS sent one, else derived from the event id. No training
+         -code fallback here: the card already shows the Training ID, so a
+         missing event code must read as missing, not as a duplicate. */
+      event_code: courseIdentifierFor({ eventCode: r.externalEventCode, eventId: r.externalEventId }),
       due_for_update: computeDueForUpdate(r.status, r.endDate),
       delivery_mode: r.deliveryMode,
       bucket: r.bucket,
@@ -622,6 +641,8 @@ export async function getTrainingDetail(trainingRef) {
   if (training.scheduleId) {
     [schedule] = await db
       .select({
+        externalEventCode: schedules.externalEventCode,
+        externalEventId: schedules.externalEventId,
         durationHours: schedules.durationHours,
         hoursPerDay: schedules.hoursPerDay,
         capacity: schedules.capacity,
@@ -692,6 +713,13 @@ export async function getTrainingDetail(trainingRef) {
   return {
     id: training.id,
     training_id: training.code,
+    // The CMS event code for this schedule — the same value the card shows and
+    // the certificate prints as its Course Identifier. Resolved through the
+    // shared helper so all three can never disagree.
+    event_code: courseIdentifierFor({
+      eventCode: schedule?.externalEventCode,
+      eventId: schedule?.externalEventId,
+    }),
     title: training.title,
     delivery_mode: training.deliveryMode,
     bucket: training.bucket,
