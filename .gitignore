@@ -2,6 +2,7 @@ node_modules/
 .env
 *.log
 .env.*
-# Nested frontend repo + local docs/scratch — not part of the backend repo
+# Nested frontend repo + local docs/scratch + workspace notes — not part of the backend repo
 portal/
 EXTRA/
+CLAUDE.md
