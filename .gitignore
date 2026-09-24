@@ -2,3 +2,6 @@ node_modules/
 .env
 *.log
 .env.*
+# Nested frontend repo + local docs/scratch — not part of the backend repo
+portal/
+EXTRA/

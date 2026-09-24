@@ -1,5 +1,5 @@
 {
-  "name": "tms-lms-backend",
+  "name": "portal-api",
   "version": "1.0.0",
   "description": "TMS / LMS API Server — Express + Drizzle ORM + PostgreSQL 18",
   "type": "module",
