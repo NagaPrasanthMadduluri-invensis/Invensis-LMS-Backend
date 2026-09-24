@@ -320,14 +320,38 @@ The authenticated user's **"My Courses"** list — every training they're enroll
         "status": "active",
         "start_date": "2026-10-10",
         "end_date": "2026-10-11",
-        "timezone": "Asia/Kolkata",
+        "start_time": "06:30:00",
+        "end_time": "10:30:00",
+        "timezone": "America/Toronto",
+        "duration_hours": 32,
+        "hours_per_day": 4,
+        "session_days": 8,
         "enrolment_status": "confirmed",
+        "is_certification": true,
+        "certification_included": true,
+        "credential_type": "attendance_letter",
         "meeting_released": false,
-        "enrolled_at": "2026-06-24T06:31:37.542Z"
+        "enrolled_at": "2026-06-24T06:31:37.542Z",
+        "trainer_name": "Trainer User",
+        "sponsorship": "corporate",
+        "sponsor_email": "buyer@example.com",
+        "certificate_id": "INVLJA4447",
+        "certificate_issued": true,
+        "certificate_awaiting_release": false,
+        "certificate_issued_at": "2026-09-20T09:12:00.000Z"
       }
     ]
   }
   ```
+  **Schedule** — `start_time`/`end_time` are **wall-clock** values in the training's own `timezone`; render them as sent and use the timezone as a *label*, never as a conversion (see §1). `session_days` is the **count** of taught days, not the array: `08 Oct → 18 Oct` is eleven calendar days but only eight sessions, so the date range alone misleads.
+
+  **Course type** — `is_certification` (`course_type = "certification"`) and `certification_included` come from the course catalog, falling back to the snapshot taken on the training when the catalog row is missing.
+
+  **`credential_type`** — `"attendance_letter"` when the course is a certification **and** the certification is included: the awarding body examines, so Invensis attests attendance only, never achievement. `"certificate"` in every other case. Computed by the shared `credentialTypeFor()` helper, the same one the public verification endpoint (§3.9.2) uses, so the learner's list, the verification page and the printed PDF cannot disagree.
+
+  **Certificate** — `certificate_issued` is `true` only once an admin has **released** it; `certificate_awaiting_release` is `true` when one exists but is still withheld. `certificate_id` is `null` until release, because the code identifies a valid credential.
+
+  **`sponsorship`** — `"self"` or `"corporate"`. `sponsor_email` is the buyer, and is `null` when the learner paid for themselves.
   Ordered by **training start date (ascending)**; trainings without a schedule sort last. `meeting_released` tells the UI whether the meeting link is available yet; fetch the full detail (incl. the link, sessions, trainer) via §3.1.1.
 - **Errors:** `401` no/invalid token
 
@@ -556,6 +580,8 @@ Single overview snapshot for the admin dashboard landing page. Aggregates users,
         "enrolled_at": "2026-06-29T09:19:14.656Z",
         "participant_name": "Priya Sharma",
         "participant_email": "priya.sharma@example.com",
+        "last_login_at": "2026-09-24T05:54:54.237Z",
+        "sponsor_name": "Jennifer Ladanchuk",
         "training_code": "TRN-2026-0001",
         "training_title": "PMP Certification Training"
       }
@@ -577,10 +603,12 @@ Single overview snapshot for the admin dashboard landing page. Aggregates users,
 - **`certificates`** — there is **no dedicated certificate store yet**; `issued` is a proxy for completed enrolments. `trainer_certificates` mirrors `trainers.total_certificates`.
 - **`tickets`** — **static placeholder** (`supported: false`, all counts `0`). Support ticketing is not built yet; swap for live counts when the feature lands.
 - Preview lists (`upcoming_trainings` ≤ 8, `completed_trainings` ≤ 8, `recent_enrolments` ≤ 8, `recent_trainers` ≤ 5) are compact, ordered snapshots for dashboard widgets. Use §3.2.1 / §3.2.11 for full paginated lists.
+- **`recent_enrolments[].last_login_at`** — the learner's last successful login, or `null` if never. Same semantics as §3.2.11.
+- **`recent_enrolments[].sponsor_name`** — the buyer on **this enrolment's order**, or `null`. Unambiguous here (a row is one enrolment), unlike §3.2.11 where a learner may hold several. `null` for a self-sponsored seat or an enrolment an admin added manually (no order).
 
 ### 3.2.1 `GET /api/admin/trainings`
 
-Lists all Training IDs for the admin trainings view.
+Lists all Training IDs for the admin trainings view. Ordered **newest training first** (`start_date DESC NULLS LAST`, then `created_at DESC`) — a training with no schedule date sorts last rather than first.
 
 - **Auth:** Bearer access token · role `admin`
 - **`200` response:**
@@ -592,6 +620,7 @@ Lists all Training IDs for the admin trainings view.
         "code": "TRN-2026-0001",
         "title": "PMP Certification Training",
         "status": "active",
+        "event_code": "INL000055",
         "delivery_mode": "virtual",
         "bucket": "direct_online",
         "capacity": 20,
@@ -610,6 +639,8 @@ Lists all Training IDs for the admin trainings view.
     ]
   }
   ```
+  - **`event_code`** — the CMS's own identifier for the schedule (`schedules.external_event_code`), the same value printed on a certificate as its **Course Identifier**. `null` for a manually created schedule that never came from the CMS. Resolved by the shared `courseIdentifierFor()` helper, so the admin list, the training detail and the printed certificate cannot disagree. **Not** the same as `schedules.external_schedule_code`, which is the schedule's own numeric id.
+  - `status` — one of `active` · `ongoing` · `postponed` · `suspended` · `completed` · `cancelled`. `pending` still exists in the enum for legacy rows but is **no longer reachable**: the column defaults to `active` and only confirmed orders reach this platform (migration `0031`).
 - `trainer_assigned` is `false` / `trainer_name` is `null` when no trainer is currently assigned.
 - Meeting fields are shown to the admin **regardless of `meeting_released`** (`null` until a link is set). `meeting_released` reflects whether learners can see it.
 
@@ -819,10 +850,10 @@ Move a participant to another training. Marks the source enrolment `transferred`
 
 ### 3.2.11 `GET /api/admin/participants`
 
-List all participants for the admin dashboard — **paginated**, with optional **search** by name or email. Ordered by name.
+List all participants for the admin dashboard — **paginated**, with optional **search**, **location** and **job title** filters. Ordered by **newest joiner first** (`created_at DESC`, `id DESC`).
 
 - **Auth:** Bearer access token · role `admin`
-- **Query params:** `search` (optional, matches name **or** email, case-insensitive) · `page` (default `1`) · `limit` (default `20`, max `100`)
+- **Query params:** `search` (optional, matches name **or** email, case-insensitive) · `location` · `job_title` · `page` (default `1`) · `limit` (default `20`, max `100`)
 - **`200` response:**
   ```json
   {
@@ -833,21 +864,31 @@ List all participants for the admin dashboard — **paginated**, with optional *
         "email": "bob.learner@acme.test",
         "phone": "+10000000002",
         "job_title": "Project Manager",
+        "location": "Bengaluru, India",
         "enrolment_count": 1,
         "account_active": true,
         "has_password": true,
+        "last_login_at": "2026-09-24T05:54:54.237Z",
+        "sponsor_name": "Jennifer Ladanchuk",
+        "sponsor_email": "ezra.b@edstellar.com",
         "created_at": "2026-06-29T05:44:08.605Z"
       }
     ],
-    "total": 16,
+    "total": 82,
     "page": 1,
-    "limit": 20
+    "limit": 10,
+    "summary": { "total": 82, "active": 37, "inactive": 45, "total_enrolments": 323 },
+    "filters": { "job_titles": ["Project Manager"], "locations": ["Bengaluru, India"] }
   }
   ```
   - `enrolment_count` — number of **confirmed** enrolments.
   - `account_active` — the linked user account's `is_active` (`false` if there's no linked account).
   - `has_password` — `false` means the account was auto-created and the user **hasn't completed setup yet** (setup email pending; see §2.6). Use this to flag "Setup pending" in the dashboard.
-  - `total` is the count **before** pagination (use it with `page`/`limit` to render pagination controls).
+  - **`last_login_at`** — instant of the user's last **successful password login**, or `null` if they have never signed in. Not touched by token refresh, so it answers "when did they last sign in", not "when was a request last made for them". Paired with `has_password`, `null` here is what identifies an invitation that was never acted on. *Never back-filled: accounts that logged in before this field existed read `null` until their next sign-in.*
+  - **`sponsor_name` / `sponsor_email`** — the buyer who paid for this learner's seat, or `null`. **Self-sponsored seats resolve to `null`** — a learner paying for themselves is not a sponsor. Where a learner has several sponsored enrolments, the **most recent** one wins (ties broken by enrolment id, so the answer is stable between requests).
+  - **`summary`** — counts over the **whole filtered result set**, not the current page. Use these for stat cards; deriving them from `participants[]` describes only the rows on screen.
+  - `filters` — distinct values across **all** participants, independent of the current search/page, so filter dropdowns stay complete.
+  - `total` is the count **before** pagination. Pagination is **offset-based** (`LIMIT/OFFSET`), so any page can be requested directly — asking for page 30 is a single query and does not fetch the pages before it.
 - **Errors:** `422` invalid query params (e.g. `limit` > 100) · `401` no/invalid token · `403` not an admin
 
 ### 3.3.1 `GET /api/trainer/trainings`
@@ -1044,6 +1085,7 @@ The signed-in user's own profile. **Capability-based:** any authenticated user (
       "first_name": "Lena", "last_name": "Ng",
       "phone": "+919000000001", "country": "India", "city": "Bengaluru",
       "time_zone": "Asia/Kolkata", "preferred_language": "en",
+      "employment_status": "employed",
       "company_name": "Acme", "industry": "Information Technology",
       "job_title": "PM", "department": "Delivery",
       "years_experience": 6, "linkedin_url": "https://linkedin.com/in/lena",
@@ -1053,6 +1095,8 @@ The signed-in user's own profile. **Capability-based:** any authenticated user (
   }
   ```
   `avatar_url` is a short-lived (1h) presigned GET URL for the photo (null if none). All profile fields are null until set.
+
+  **`employment_status`** — `"employed"` · `"not_employed"` · `null`. `null` means the profile predates the field and is treated as **employed**, so requirements are unchanged for existing profiles. When `"not_employed"`, `company_name`, `job_title` and `years_experience` are **not asked for** and are cleared on save (an employer kept on record that the learner can no longer see or edit is worse than an empty field); `industry` and `department` are still asked but become **optional**. This also drives the profile-completion prompt — the gate and the form use the same rule, so a not-employed learner can actually reach a complete profile.
 - **Errors:** `401` no/invalid token
 
 ### 3.5.2 `PATCH /api/me/profile`
@@ -1060,7 +1104,7 @@ The signed-in user's own profile. **Capability-based:** any authenticated user (
 Update any subset of profile fields. **`email` is not accepted** (read-only). Send `null` to clear a field. Editing `first_name`/`last_name` re-syncs the account display `name` (and the linked participant record's name); editing `phone`/`job_title`/`city`/`country` syncs to the participant record too.
 
 - **Auth:** Bearer access token
-- **Body (all optional, ≥1 required):** `first_name, last_name, phone, country, city, time_zone, preferred_language, company_name, industry, job_title, department, years_experience` (int 0–80), `linkedin_url` (valid URL), `avatar_key`
+- **Body (all optional, ≥1 required):** `first_name, last_name, phone, country, city, time_zone, preferred_language, employment_status` (`"employed"` | `"not_employed"` | `null`), `company_name, industry, job_title, department, years_experience` (int 0–80), `linkedin_url` (valid URL), `avatar_key`
 - **`200` response:** the same shape as §3.5.1 (updated).
 - **Errors:** `422` empty/invalid body (e.g. bad `linkedin_url`, out-of-range `years_experience`) · `401` no/invalid token
 
@@ -1286,6 +1330,46 @@ Attendance export for admins. `?format=csv` streams a CSV download; default JSON
 - **Auth:** Bearer · role `admin`
 - **JSON `200`:** `{ "records": [ { "training_code", "training_title", "day_number", "session_start", "participant_name", "participant_email", "status", "marked_at" } ] }`
 - **CSV:** `Content-Type: text/csv` attachment with the same columns.
+
+---
+
+## 3.9 Certificates (admin) — `/api/admin/certificates`
+
+Certificate issue and release. Every route requires a Bearer token and role `admin`.
+
+A certificate moves through three states: **not generated → generated → released**. Generating does *not* reveal it — a learner sees nothing until an admin releases it.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/admin/certificates` | Every certificate across all trainings |
+| `GET` | `/api/admin/certificates/trainings` | Completed trainings eligible for certificates |
+| `GET` | `/api/admin/certificates/trainings/:trainingRef` | Per-learner certificate state for one training |
+| `PUT` | `/api/admin/certificates/trainings/:trainingRef/pdus` | Set PDUs, claim code and printed mode |
+| `POST` | `/api/admin/certificates/trainings/:trainingRef/generate` | Create certificates (training must be `completed`) |
+| `POST` | `/api/admin/certificates/trainings/:trainingRef/release` | Make them visible to learners |
+| `POST` | `/api/admin/certificates/:certificateId/revoke` | Take a released certificate back |
+| `PATCH` | `/api/admin/certificates/:certificateId` | Correct an issued certificate |
+
+### 3.9.1 `PUT /api/admin/certificates/trainings/:trainingRef/pdus`
+
+Cohort-wide values printed on the certificate. Applies to the training **and** to any certificates already generated for it, so a correction reaches documents that already exist.
+
+- **Body — all three fields are OPTIONAL** (at least one required):
+
+  | Field | Type | Notes |
+  |---|---|---|
+  | `pdus` | int `8`–`60`, or `null` | Most trainings are not PMI-accredited and award none |
+  | `pdu_claim_code` | string ≥3 chars, or `null` | |
+  | `certificate_mode` | one of `Live virtual class` · `in-person onsite` · `online classroom` · `onsite classroom`, or `null` | Unset keeps the wording derived from the training's delivery mode |
+
+- **`null` vs absent is significant.** `null` **clears** a stored value; an **absent** key leaves it untouched. That is what lets an admin remove a claim code entered by mistake without also wiping the PDU count — and why saving a PDU count alone does not blank the claim code.
+- **Optional is not unvalidated.** When a PDU count *is* supplied it must fall in 8–60. A wrong PDU count on a certificate is a compliance problem, so out-of-range values are rejected rather than stored.
+- **Certificate generation does not require any of them** — it requires only that the training is `completed`. The certificate omits the fields it has no value for.
+- **Errors:** `422` empty body or out-of-range value · `404` unknown training · `401`/`403`
+
+### 3.9.2 Public verification — `GET /api/verify/:code`
+
+Unauthenticated (rate-limited, 30/min). Backs the QR code printed on every certificate. Returns `200` whether or not the code matches, so the endpoint cannot be used to enumerate valid certificate ids. `credential_type` is `"attendance_letter"` when the course is a certification **and** the certification is included (the awarding body certifies, so Invensis attests attendance only), otherwise `"certificate"`.
 
 ---
 
