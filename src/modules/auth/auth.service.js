@@ -54,6 +54,17 @@ export async function login({ email, password }) {
   if (!ok) {
     throw new AppError("Invalid email or password", 401);
   }
+
+  /* Record the sign-in. Best-effort on purpose: this is an audit convenience,
+     and a write failure here must never turn a valid login into an error the
+     person cannot get past. */
+  const loginAt = new Date();
+  try {
+    await db.update(users).set({ lastLoginAt: loginAt }).where(eq(users.id, user.id));
+  } catch {
+    /* non-fatal */
+  }
+
   return {
     user: publicUser(user),
     accessToken: signAccessToken(user),

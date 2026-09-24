@@ -1,0 +1,1 @@
+ALTER TABLE "user_profiles" ADD COLUMN "employment_status" text;

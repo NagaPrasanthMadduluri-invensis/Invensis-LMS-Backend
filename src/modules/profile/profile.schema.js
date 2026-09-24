@@ -13,6 +13,7 @@ export const updateProfileSchema = z
     city: str(120),
     time_zone: str(60),
     preferred_language: str(60),
+    employment_status: z.enum(["employed", "not_employed"]).nullable().optional(),
     company_name: str(150),
     industry: str(150),
     job_title: str(150),

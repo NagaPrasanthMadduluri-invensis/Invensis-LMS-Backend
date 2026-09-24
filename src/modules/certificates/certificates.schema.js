@@ -14,18 +14,36 @@ export const revokeCertificateSchema = z.object({
 });
 
 /**
- * PDUs awarded for a training, plus the PMI claim code.
+ * PDUs awarded for a training, the PMI claim code, and the printed mode.
  *
- * 8–60 is the range the business issues; anything outside it is a typo rather
+ * All three are OPTIONAL. Most trainings are not PMI-accredited and have no
+ * PDUs or claim code to award, so requiring them blocked certificate
+ * generation for the majority; the certificate simply omits the fields it has
+ * no value for. `certificate_mode` unset keeps the wording derived from the
+ * training's delivery mode.
+ *
+ * Optional does not mean unchecked: when a PDU count IS given it must fall in
+ * 8-60, the range the business issues. Anything outside that is a typo rather
  * than a real award, and a wrong PDU count on a certificate is a compliance
- * problem, so it is rejected rather than stored.
+ * problem — so it is still rejected rather than stored.
+ *
+ * `null` is distinct from absent: null CLEARS a stored value, absent leaves it
+ * untouched. That is what lets an admin remove a claim code entered by mistake
+ * without also wiping the PDUs.
  */
-export const setTrainingPdusSchema = z.object({
-  pdus: z.number().int().min(8, "PDUs must be at least 8").max(60, "PDUs cannot exceed 60"),
-  pdu_claim_code: z.string().trim().min(3).max(40),
-  // Optional: unset keeps the wording derived from the training's delivery mode.
-  certificate_mode: z.enum(CERTIFICATE_MODES).nullable().optional(),
-});
+export const setTrainingPdusSchema = z
+  .object({
+    pdus: z
+      .number()
+      .int()
+      .min(8, "PDUs must be at least 8")
+      .max(60, "PDUs cannot exceed 60")
+      .nullable()
+      .optional(),
+    pdu_claim_code: z.string().trim().min(3).max(40).nullable().optional(),
+    certificate_mode: z.enum(CERTIFICATE_MODES).nullable().optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
 
 /**
  * Admin correction of an issued certificate.

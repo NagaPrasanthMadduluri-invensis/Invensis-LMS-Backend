@@ -515,23 +515,25 @@ export async function setTrainingPdus(adminId, trainingRef, { pdus, pdu_claim_co
   return db.transaction(async (tx) => {
     const training = await resolveTraining(tx, trainingRef);
 
+    /* Only the fields the admin actually sent are written. All three are
+       optional, so an absent key must leave the stored value alone — writing
+       `undefined` across the board would silently clear a claim code every
+       time someone saved a PDU count on its own. `null` is still written,
+       because null is how a value is deliberately cleared. */
+    const patch = {
+      ...(pdus !== undefined ? { pdus } : {}),
+      ...(pdu_claim_code !== undefined ? { pduClaimCode: pdu_claim_code } : {}),
+      ...(certificate_mode !== undefined ? { certificateMode: certificate_mode } : {}),
+    };
+
     await tx
       .update(trainingIds)
-      .set({
-        pdus,
-        pduClaimCode: pdu_claim_code,
-        ...(certificate_mode !== undefined ? { certificateMode: certificate_mode } : {}),
-        updatedAt: new Date(),
-      })
+      .set({ ...patch, updatedAt: new Date() })
       .where(eq(trainingIds.id, training.id));
 
     const synced = await tx
       .update(certificates)
-      .set({
-        pdus,
-        pduClaimCode: pdu_claim_code,
-        ...(certificate_mode !== undefined ? { certificateMode: certificate_mode } : {}),
-      })
+      .set(patch)
       .where(
         inArray(
           certificates.enrolmentId,

@@ -262,7 +262,9 @@ async function seed() {
     if (daysFromNow < -7) status = i % 8 === 0 ? "cancelled" : "completed";
     else if (daysFromNow <= 3) status = "ongoing";
     else if (daysFromNow <= 60) status = "active";
-    else status = i % 3 === 0 ? "active" : "pending";
+    // `pending` is not a state this platform produces — only confirmed
+    // trainings arrive here — so demo data must not invent one either.
+    else status = "active";
 
     const capacity = randInt(12, 40);
     const minSeats = randInt(3, 6);

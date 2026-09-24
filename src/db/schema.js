@@ -49,6 +49,12 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash"),
   isActive: boolean("is_active").notNull().default(true),
   tokenVersion: integer("token_version").notNull().default(0),
+  /* Stamped on each successful password login. Null means the account has never
+     been signed into — which, paired with `password_hash IS NULL` ("setup
+     pending"), is what tells an admin whether an invite was ever acted on.
+     Deliberately not touched by token refresh: this answers "when did they last
+     sign in", not "when was a request last made on their behalf". */
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -73,6 +79,11 @@ export const userProfiles = pgTable("user_profiles", {
   addressLine2: text("address_line2"),
   timeZone: text("time_zone"),
   preferredLanguage: text("preferred_language"),
+  /* "employed" | "not_employed". Null on profiles that predate the field.
+     A learner who isn't employed has no employer, sector, title or department
+     to give, so this is what makes those five fields — and years of experience
+     — optional rather than blocking profile completion forever. */
+  employmentStatus: text("employment_status"),
   companyName: text("company_name"),
   // The learner's industry sector. Shown to trainers on the roster in place of
   // the employer name, which they have no need to see.
@@ -177,7 +188,13 @@ export const trainingIds = pgTable(
     title: text("title").notNull(),
     bucket: bucketEnum("bucket").notNull(),
     deliveryMode: deliveryModeEnum("delivery_mode").notNull(),
-    status: trainingStatusEnum("status").notNull().default("pending"),
+    /* Defaults to `active`, not `pending`. Only confirmed orders reach this
+       platform — order ingestion has always written "active" explicitly — so a
+       row defaulting to `pending` could only ever be an accident, and it gave
+       the admin a status filter that matched nothing real. `pending` stays in
+       the enum because Postgres cannot drop an enum value, and so any legacy
+       row still renders sanely. */
+    status: trainingStatusEnum("status").notNull().default("active"),
     /* PDUs awarded and the PMI claim code, entered by an admin once per
        training. NOT derived from duration: contact hours and PDUs are
        different measures and a course can award either more or fewer. */

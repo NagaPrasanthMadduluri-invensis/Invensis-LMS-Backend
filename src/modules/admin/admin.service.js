@@ -6,6 +6,7 @@ import {
   trainers,
   trainerAssignments,
   enrolments,
+  orders,
   schedules,
   participants,
   certificates,
@@ -1338,19 +1339,57 @@ export async function listParticipants({ search, page, limit, location, job_titl
       createdAt: participants.createdAt,
       accountActive: users.isActive,
       hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
+      lastLoginAt: users.lastLoginAt,
+      /* Who paid for this learner's seat.
+         Resolved as ONE json object from ONE row rather than two separate
+         scalar subqueries, which could each settle on a different enrolment and
+         pair a name with the wrong email. Self-sponsored seats are excluded —
+         the buyer being the learner is not a sponsor — and the most recent
+         enrolment wins, with `id` breaking ties so the answer is stable
+         between requests. No participant currently has two distinct sponsors,
+         but nothing prevents it. */
+      sponsor: sql`(
+        SELECT json_build_object('name', su.name, 'email', su.email)
+          FROM enrolments e
+          JOIN orders o ON o.id = e.order_id
+          JOIN users su ON su.id = o.sponsor_user_id
+         WHERE e.participant_id = ${participants.id}
+           AND su.id IS DISTINCT FROM ${participants.userId}
+         ORDER BY e.enrolled_at DESC, e.id DESC
+         LIMIT 1
+      )`,
       enrolmentCount,
     })
     .from(participants)
     .leftJoin(users, eq(participants.userId, users.id))
     .where(where)
-    .orderBy(asc(participants.name))
+    /* Newest joiner first. `id` is the tie-break and it is not cosmetic: with
+       OFFSET paging, any sort whose key repeats leaves the order of the tied
+       rows up to the planner, so the same person can appear on two pages while
+       another is skipped entirely. Bulk-imported participants share a
+       created_at to the millisecond, so ties are the norm here, not the
+       exception. A unique trailing key makes the ordering total and the paging
+       stable. */
+    .orderBy(desc(participants.createdAt), desc(participants.id))
     .limit(limit)
     .offset(offset);
 
-  const [{ count }] = await db
-    .select({ count: sql`count(*)::int` })
+  /* Totals across the WHOLE filtered set, not the page.
+     The stat cards used to be derived from the returned rows, which was
+     already loose at 100 per page and plainly wrong at 10 — "Active: 7" when
+     the filter matches 500 people. One aggregate pass answers the count used
+     for paging and the figures on the cards together, so they can never
+     disagree with each other or with the rows below them. */
+  const [agg] = await db
+    .select({
+      count: sql`count(*)::int`,
+      active: sql`count(*) FILTER (WHERE ${users.isActive} IS TRUE)::int`,
+      enrolments: sql`COALESCE(SUM(${enrolmentCount}), 0)::int`,
+    })
     .from(participants)
+    .leftJoin(users, eq(participants.userId, users.id))
     .where(where);
+  const count = agg?.count ?? 0;
 
   // Distinct filter options across ALL participants (independent of the current
   // search/filter/page) so the dropdowns stay complete.
@@ -1378,11 +1417,21 @@ export async function listParticipants({ search, page, limit, location, job_titl
       enrolment_count: r.enrolmentCount,
       account_active: r.accountActive ?? false,
       has_password: r.hasPassword ?? false,
+      last_login_at: r.lastLoginAt ?? null,
+      sponsor_name: r.sponsor?.name ?? null,
+      sponsor_email: r.sponsor?.email ?? null,
       created_at: r.createdAt,
     })),
     total: count,
     page,
     limit,
+    // Whole-result-set figures for the stat cards — see the aggregate above.
+    summary: {
+      total: count,
+      active: agg?.active ?? 0,
+      inactive: count - (agg?.active ?? 0),
+      total_enrolments: agg?.enrolments ?? 0,
+    },
     filters: {
       job_titles: jobTitleRows.map((r) => r.value).filter(Boolean),
       locations: locationRows.map((r) => r.value).filter(Boolean),
@@ -1426,6 +1475,7 @@ export async function getParticipantDetail(participantId) {
       createdAt: participants.createdAt,
       accountActive: users.isActive,
       hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
+      lastLoginAt: users.lastLoginAt,
       companyName: userProfiles.companyName,
       department: userProfiles.department,
       yearsExperience: userProfiles.yearsExperience,
@@ -1501,6 +1551,7 @@ export async function getParticipantDetail(participantId) {
       linkedin_url: p.linkedinUrl ?? null,
       account_active: p.accountActive ?? false,
       has_password: p.hasPassword ?? false,
+      last_login_at: p.lastLoginAt ?? null,
       created_at: p.createdAt,
     },
     enrolments: enrolled,
@@ -1840,6 +1891,16 @@ export async function getDashboard() {
         enrolledAt: enrolments.enrolledAt,
         participantName: participants.name,
         participantEmail: participants.email,
+        // Null when the account has never been signed into.
+        lastLoginAt: users.lastLoginAt,
+        /* The buyer of THIS enrolment's order — unambiguous here, unlike the
+           user list, because a row is one enrolment. Self-sponsored seats
+           resolve to null: the learner paying for themselves is not a sponsor. */
+        sponsorName: sql`(
+          SELECT su.name FROM users su
+           WHERE su.id = ${orders.sponsorUserId}
+             AND su.id IS DISTINCT FROM ${participants.userId}
+        )`,
         trainingCode: trainingIds.code,
         trainingTitle: trainingIds.title,
         deliveryMode: trainingIds.deliveryMode,
@@ -1853,6 +1914,10 @@ export async function getDashboard() {
       .innerJoin(participants, eq(enrolments.participantId, participants.id))
       .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
       .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+      // Left: a participant row can exist before its user account does.
+      .leftJoin(users, eq(participants.userId, users.id))
+      // Left: an enrolment added manually by an admin has no order.
+      .leftJoin(orders, eq(enrolments.orderId, orders.id))
       .orderBy(desc(enrolments.enrolledAt))
       .limit(10),
 
@@ -2044,6 +2109,8 @@ export async function getDashboard() {
       enrolled_at: e.enrolledAt,
       participant_name: e.participantName,
       participant_email: e.participantEmail,
+      last_login_at: e.lastLoginAt ?? null,
+      sponsor_name: e.sponsorName ?? null,
       training_code: e.trainingCode,
       training_title: e.trainingTitle,
       delivery_mode: e.deliveryMode,
