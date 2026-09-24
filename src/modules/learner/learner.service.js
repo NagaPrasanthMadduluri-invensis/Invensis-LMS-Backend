@@ -651,6 +651,8 @@ async function findEligibleEnrolment(userId, trainingRef) {
       certId: certificates.id,
       releasedAt: certificates.releasedAt,
       learnerNameOverride: certificates.learnerNameOverride,
+      courseTitleOverride: certificates.courseTitleOverride,
+      trademarkName: certificates.trademarkName,
       certPdus: certificates.pdus,
       certPduClaimCode: certificates.pduClaimCode,
       certMode: certificates.certificateMode,
@@ -690,7 +692,13 @@ function certificateDto(r) {
     // Course name and dates always come from the training — only the learner's
     // name is correctable, so a certificate can never disagree with the
     // training it certifies.
-    title: r.title, // course name printed on the certificate
+    /* The admin's override when set, otherwise the training's own title — the
+       name a certificate should carry is not always the name the business
+       tracks the training by. Shared by the list and the single-certificate
+       lookup, so both print the same thing. */
+    title: r.courseTitleOverride ?? r.title,
+    // Printed on the Letter of Course Attendance only; null = no line.
+    trademark_name: r.trademarkName ?? null,
     delivery_mode: r.deliveryMode,
     // "…which took place on 5th and 6th September 2026, via online classroom."
     mode_of_training: modeOfTraining(r.deliveryMode, r.certMode),
@@ -756,6 +764,8 @@ export async function listCertificates(userId) {
       certId: certificates.id,
       releasedAt: certificates.releasedAt,
       learnerNameOverride: certificates.learnerNameOverride,
+      courseTitleOverride: certificates.courseTitleOverride,
+      trademarkName: certificates.trademarkName,
       certPdus: certificates.pdus,
       certPduClaimCode: certificates.pduClaimCode,
       certMode: certificates.certificateMode,

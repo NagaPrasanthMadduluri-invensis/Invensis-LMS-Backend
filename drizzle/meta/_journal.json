@@ -225,6 +225,20 @@
       "when": 1790235595536,
       "tag": "0031_training_status_default_active",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790249356190,
+      "tag": "0032_certificate_course_title_override",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790252115381,
+      "tag": "0033_certificate_trademark_name",
+      "breakpoints": true
     }
   ]
 }

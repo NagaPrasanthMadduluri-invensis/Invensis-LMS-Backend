@@ -42,20 +42,29 @@ export const setTrainingPdusSchema = z
       .optional(),
     pdu_claim_code: z.string().trim().min(3).max(40).nullable().optional(),
     certificate_mode: z.enum(CERTIFICATE_MODES).nullable().optional(),
+    /* Trademarked scheme name for the Letter of Course Attendance's
+       attribution line — "ITIL®", "Lean Six Sigma®". Only the mark is entered;
+       the sentence around it is fixed in the document. */
+    trademark_name: z.string().trim().min(2).max(120).nullable().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
 
 /**
  * Admin correction of an issued certificate.
  *
- * Course title and session dates are NOT here on purpose: they come from the
- * training, so a certificate can never state something the training doesn't.
- * `learner_name` accepts null to clear the override and fall back to the
- * participant record — that is how a wrong edit is undone.
+ * `learner_name` and `course_title` are OVERRIDES: they change what the
+ * document prints without touching the participant record or the training, so
+ * analytics and internal naming are unaffected. Both accept `null` to clear the
+ * override and fall back to the joined value — that is how a wrong edit is
+ * undone.
+ *
+ * Session dates are still NOT here: those are facts about when the training
+ * ran, and a certificate must not be able to claim otherwise.
  */
 export const updateCertificateSchema = z
   .object({
     learner_name: z.string().trim().min(1).max(200).nullable().optional(),
+    course_title: z.string().trim().min(1).max(300).nullable().optional(),
     certificate_code: z.string().trim().min(3).max(40).optional(),
     course_identifier: z.string().trim().max(60).nullable().optional(),
     pdus: z.number().int().min(8).max(60).nullable().optional(),

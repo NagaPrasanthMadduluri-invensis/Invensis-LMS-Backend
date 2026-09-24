@@ -207,6 +207,12 @@ export const trainingIds = pgTable(
        `virtual` training may be certified as "Live virtual class". Null falls
        back to wording derived from deliveryMode. */
     certificateMode: text("certificate_mode"),
+    /* The trademarked scheme name printed on a Letter of Course Attendance —
+       "ITIL®", "Lean Six Sigma®". Admin-entered because only they know which
+       mark applies; the attribution wording around it is fixed in the document.
+       Null on courses with no mark, and the line is then omitted entirely
+       rather than printed half-empty. */
+    trademarkName: text("trademark_name"),
     capacity: integer("capacity").notNull(),
     minSeats: integer("min_seats").notNull(),
     minSeatsOverride: boolean("min_seats_override").notNull().default(false),
@@ -429,14 +435,22 @@ export const certificates = pgTable("certificates", {
   pduClaimCode: text("pdu_claim_code"),
   // Snapshot of the training's certificate wording at issue time.
   certificateMode: text("certificate_mode"),
+  // Snapshot, like the PDUs above.
+  trademarkName: text("trademark_name"),
 
   /* ── Admin override ──────────────────────────────────────
-     Only the learner's name is correctable here, for a misspelling that must
-     not rewrite the participant record analytics read. Course title and the
-     session dates are deliberately NOT overridable — they come from the
-     training, so one certificate can never disagree with the training it
-     certifies. Null = use the joined value. */
+     The learner's name and the printed course title are correctable here. Both
+     are overrides, not edits: the participant record and the training keep
+     their own values, so analytics and the admin's internal naming are
+     untouched. Null = use the joined value.
+
+     Course title is overridable because the name a certificate should carry is
+     not always the name the business tracks a training by — "PMP Certification
+     Training (Nov cohort, corporate)" internally, "PMP Certification Training"
+     on the document. Session dates remain NOT overridable: those are facts
+     about when the training ran. */
   learnerNameOverride: text("learner_name_override"),
+  courseTitleOverride: text("course_title_override"),
 });
 
 /* ── surveys (pre/post-training feedback forms) ────────────

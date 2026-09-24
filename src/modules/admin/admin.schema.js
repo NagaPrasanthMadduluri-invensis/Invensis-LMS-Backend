@@ -2,6 +2,13 @@ import { z } from "zod";
 
 export const updateTrainingSchema = z
   .object({
+    /* Neither `title` nor `course_slug` is editable here. The course name comes
+       from the CMS course this training was created from, and the slug is the
+       key the two are matched by — an admin renaming a training would put the
+       platform out of step with the catalogue it syncs from. A certificate that
+       needs to print a different name uses the per-certificate override
+       (`PATCH /api/admin/certificates/:id`, `course_title`), which changes the
+       document without touching the training. */
     trainer_id: z.string().uuid().optional(),
     meeting_url: z.string().url().optional(),
     meeting_platform: z.enum(["zoom", "teams", "other"]).optional(),

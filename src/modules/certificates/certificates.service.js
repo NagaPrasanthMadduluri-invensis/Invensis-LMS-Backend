@@ -170,12 +170,18 @@ function certificateRow(r) {
     // What prints. Only the learner name is correctable; the course title and
     // session dates always come from the training.
     learner_name: r.learnerNameOverride ?? r.participantName,
-    course_title: r.trainingTitle,
+    // What the document prints. `title_override` below is the raw value, so the
+    // edit dialog can show an empty field when nothing has been overridden.
+    course_title: r.courseTitleOverride ?? r.trainingTitle,
     start_date: r.startDate,
     end_date: r.endDate,
 
     name_override: r.learnerNameOverride ?? null,
+    title_override: r.courseTitleOverride ?? null,
     source_learner_name: r.participantName,
+    // The training's own title, so the dialog can say what clearing the
+    // override would restore.
+    source_course_title: r.trainingTitle,
   };
 }
 
@@ -202,6 +208,7 @@ async function certificateRowsFor(runner, training) {
       downloadCount: certificates.downloadCount,
       lastDownloadedAt: certificates.lastDownloadedAt,
       learnerNameOverride: certificates.learnerNameOverride,
+      courseTitleOverride: certificates.courseTitleOverride,
       pdus: certificates.pdus,
       pduClaimCode: certificates.pduClaimCode,
       certificateMode: certificates.certificateMode,
@@ -247,6 +254,7 @@ export async function getTrainingCertificates(trainingRef) {
       delivery_mode: training.deliveryMode,
       mode_of_training: modeOfTraining(training.deliveryMode, training.certificateMode),
       certificate_mode: training.certificateMode ?? null,
+      trademark_name: training.trademarkName ?? null,
       certificate_mode_options: CERTIFICATE_MODES,
       start_date: schedule?.startDate ?? null,
       end_date: schedule?.endDate ?? null,
@@ -453,11 +461,11 @@ export async function updateCertificate(adminId, certificateId, body, ip) {
       .limit(1);
     if (!cert) throw new AppError("Certificate not found", 404);
 
-    // Course title and session dates are deliberately absent: they come from
-    // the training, so a certificate can never disagree with what it certifies.
-    // Fix those on the training itself.
+    // Session dates are deliberately absent: they are facts about when the
+    // training ran, and are fixed on the training itself.
     const FIELDS = {
       learner_name: "learnerNameOverride",
+      course_title: "courseTitleOverride",
       certificate_code: "certificateCode",
       course_identifier: "activityCode",
       pdus: "pdus",
@@ -511,7 +519,7 @@ export async function updateCertificate(adminId, certificateId, body, ip) {
  * updated too, so correcting a typo fixes the ones already issued rather than
  * leaving a cohort split between two values.
  */
-export async function setTrainingPdus(adminId, trainingRef, { pdus, pdu_claim_code, certificate_mode }, ip) {
+export async function setTrainingPdus(adminId, trainingRef, { pdus, pdu_claim_code, certificate_mode, trademark_name }, ip) {
   return db.transaction(async (tx) => {
     const training = await resolveTraining(tx, trainingRef);
 
@@ -524,6 +532,7 @@ export async function setTrainingPdus(adminId, trainingRef, { pdus, pdu_claim_co
       ...(pdus !== undefined ? { pdus } : {}),
       ...(pdu_claim_code !== undefined ? { pduClaimCode: pdu_claim_code } : {}),
       ...(certificate_mode !== undefined ? { certificateMode: certificate_mode } : {}),
+      ...(trademark_name !== undefined ? { trademarkName: trademark_name } : {}),
     };
 
     await tx

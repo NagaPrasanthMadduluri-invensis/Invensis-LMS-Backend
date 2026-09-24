@@ -127,6 +127,7 @@ export async function issueCertificate(runner, { enrolmentId, trainingId, survey
       pdus: trainingIds.pdus,
       pduClaimCode: trainingIds.pduClaimCode,
       certificateMode: trainingIds.certificateMode,
+      trademarkName: trainingIds.trademarkName,
     })
     .from(trainingIds)
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
@@ -144,6 +145,7 @@ export async function issueCertificate(runner, { enrolmentId, trainingId, survey
       pdus: t?.pdus ?? null,
       pduClaimCode: t?.pduClaimCode ?? null,
       certificateMode: t?.certificateMode ?? null,
+      trademarkName: t?.trademarkName ?? null,
       surveyResponses: surveyResponses ?? {},
     })
     .onConflictDoNothing({ target: certificates.enrolmentId })

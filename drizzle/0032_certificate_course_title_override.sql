@@ -1,0 +1,1 @@
+ALTER TABLE "certificates" ADD COLUMN "course_title_override" text;

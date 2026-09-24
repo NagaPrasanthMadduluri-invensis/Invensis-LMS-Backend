@@ -48,6 +48,7 @@ export async function verifyCertificate(rawCode, rawName) {
       pduClaimCode: certificates.pduClaimCode,
       certificateMode: certificates.certificateMode,
       learnerNameOverride: certificates.learnerNameOverride,
+      courseTitleOverride: certificates.courseTitleOverride,
       participantName: participants.name,
       trainingCode: trainingIds.code,
       trainingTitle: trainingIds.title,
@@ -104,7 +105,10 @@ export async function verifyCertificate(rawCode, rawName) {
       pdu_claim_code: row.pduClaimCode ?? null,
       pdus: row.pdus ?? null,
       holder_name: holder,
-      course_title: row.trainingTitle,
+      // The override, so the verification page names the course exactly as the
+      // printed document does — otherwise scanning a certificate would show a
+      // different course name than the certificate itself.
+      course_title: row.courseTitleOverride ?? row.trainingTitle,
       training_mode: modeOfTraining(row.deliveryMode, row.certificateMode),
       session_dates: row.sessionDates ?? null,
       start_date: row.startDate ?? null,
