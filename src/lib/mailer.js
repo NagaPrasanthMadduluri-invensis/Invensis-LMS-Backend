@@ -44,7 +44,7 @@ async function sendMail({ to, cc, subject, text, html }) {
   return msg;
 }
 
-const BRAND_LOGO = "https://media.invensislearning.com/invensis-learning-logo.svg";
+const BRAND_LOGO = "https://media.invensislearning.com/Invensis-learning-logo.png";
 
 // Shared dark footer (brand, social, contact, address, legal). Static — no
 // per-email values — so it lives outside the shell function.
