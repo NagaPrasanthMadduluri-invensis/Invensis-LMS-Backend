@@ -320,21 +320,12 @@ export async function generateCertificates(adminId, trainingRef, enrolmentIds, i
         )
       );
 
-    // PDUs and the claim code print on the certificate, so they must be set
-    // before any is generated — otherwise the first batch goes out blank and
-    // has to be regenerated. Refused with the reason rather than silently
-    // issuing an incomplete certificate.
-    if (training.pdus == null || !training.pduClaimCode) {
-      const missing = [
-        training.pdus == null ? "PDUs" : null,
-        !training.pduClaimCode ? "PDU claim code" : null,
-      ].filter(Boolean);
-      throw new AppError(
-        `Set the ${missing.join(" and ")} for this training before generating certificates.`,
-        409,
-        { code: "pdu_details_missing", missing }
-      );
-    }
+    /* PDUs, the claim code, the printed mode and the trademark are all OPTIONAL.
+       Most trainings are not PMI-accredited and award no PDUs at all, so
+       requiring them blocked certificate generation for the majority — a
+       non-certification course could never issue one. The certificate simply
+       omits the fields it has no value for, and the admin can fill them in
+       later: `setTrainingPdus` syncs certificates already generated. */
 
     let created = 0;
     for (const t of targets) {
