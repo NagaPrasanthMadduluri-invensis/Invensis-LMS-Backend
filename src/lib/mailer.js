@@ -88,7 +88,7 @@ a{color:#018BD4}
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f4f7fb;"><tbody><tr><td align="center" style="padding:30px 12px;">
 <table role="presentation" class="wrap" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(16,16,48,.07);">
 <tbody>
-<tr><td style="background:#101030;padding:20px 34px;">
+<tr><td style="padding:20px 34px;">
   <img src="${BRAND_LOGO}" alt="Invensis Learning" width="180" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-width:180px;">
 </td></tr>
 <tr><td style="height:4px;background:#F8981C;font-size:0;line-height:0;"> </td></tr>
