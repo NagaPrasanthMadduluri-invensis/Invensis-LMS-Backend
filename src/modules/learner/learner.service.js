@@ -437,9 +437,27 @@ export async function getDashboard(userId) {
       totalSessions: sql`(
         SELECT count(*)::int FROM training_sessions ts WHERE ts.training_id = ${trainingIds.id}
       )`,
+      // A session counts toward progress once it has actually elapsed — its
+      // scheduled end (wall-clock, interpreted in the training's timezone) is in
+      // the past — OR an admin/trainer has marked it 'completed'. This makes the
+      // dashboard progress advance day by day on its own, instead of sitting at
+      // 0% until every session is manually flipped to 'completed'.
+      //
+      // The timezone is validated against pg_timezone_names before use: prod
+      // holds a few non-IANA strings (e.g. ACDT, PHT, HKT) that AT TIME ZONE
+      // would reject and 500 the whole dashboard, so those fall back to UTC.
       completedSessions: sql`(
         SELECT count(*)::int FROM training_sessions ts
-        WHERE ts.training_id = ${trainingIds.id} AND ts.status = 'completed'
+        WHERE ts.training_id = ${trainingIds.id}
+          AND (
+            ts.status = 'completed'
+            OR (
+              (ts.end_time AT TIME ZONE 'UTC') AT TIME ZONE (
+                CASE WHEN ${schedules.timezone} IN (SELECT name FROM pg_timezone_names)
+                     THEN ${schedules.timezone} ELSE 'UTC' END
+              )
+            ) <= now()
+          )
       )`,
     })
     .from(enrolments)
