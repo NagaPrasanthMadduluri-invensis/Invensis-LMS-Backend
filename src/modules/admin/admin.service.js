@@ -22,6 +22,7 @@ import { hashPassword } from "../../lib/password.js";
 import { provisionAccountSetup, sendAccountSetupLink } from "../../lib/account-setup.js";
 import { courseIdentifierFor, issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
+import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
 import {
   notifyJoinLinkReleased,
   notifyTrainerAssigned,
@@ -386,6 +387,16 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       .where(eq(trainingSessions.trainingId, training.id))
       .orderBy(trainingSessions.dayNumber);
 
+    // Attendance isn't deployed in every environment. Probe for the table once
+    // (Postgres poisons a transaction on the first failed statement, so a
+    // missing-relation error can't be caught mid-transaction). Used both to
+    // protect attendance rows when deleting surplus days and to recompute each
+    // enrolment's overall attendance after the day count changes.
+    const attProbe = await tx.execute(
+      sql`select to_regclass('public.attendance_records') is not null as present`
+    );
+    const attendanceTracked = !!(attProbe.rows?.[0]?.present ?? attProbe[0]?.present);
+
     const currentCount = existing.length || (Array.isArray(schedule.sessionDates) ? schedule.sessionDates.length : 1);
     const startTime = normalizeTime(body.start_time || schedule.startTime);
     const endTime = normalizeTime(body.end_time || schedule.endTime);
@@ -463,18 +474,8 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
       }
     }
     // Surplus sessions (schedule now shorter): delete only if no attendance.
-    //
-    // Attendance isn't deployed in every environment. Probe for the table once
-    // rather than letting a missing-relation error abort the whole transaction
-    // (Postgres poisons a transaction on the first failed statement, so a
-    // try/catch here would not save it). No table means no attendance rows to
-    // protect, so the surplus days are simply removed.
+    // No attendance table means no rows to protect, so surplus days are removed.
     if (sessionDates.length < existing.length) {
-      const probe = await tx.execute(
-        sql`select to_regclass('public.attendance_records') is not null as present`
-      );
-      const attendanceTracked = !!(probe.rows?.[0]?.present ?? probe[0]?.present);
-
       for (let i = sessionDates.length; i < existing.length; i++) {
         const row = existing[i];
         let attended = false;
@@ -489,6 +490,25 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
         if (!attended) {
           await tx.delete(trainingSessions).where(eq(trainingSessions.id, row.id));
         }
+      }
+    }
+
+    // 2b. The session set changed (days added or removed), which moves the
+    //     denominator behind every enrolment's overall attendance_status. That
+    //     value is only otherwise recomputed when a trainer marks attendance, so
+    //     without this a shorter schedule leaves a stale "partial" on a learner
+    //     who actually attended every remaining day. Recompute each active
+    //     enrolment from its records.
+    if (attendanceTracked) {
+      const enrolled = await tx
+        .select({ participantId: enrolments.participantId })
+        .from(enrolments)
+        .where(and(
+          eq(enrolments.trainingId, training.id),
+          notInArray(enrolments.status, ["cancelled", "transferred"])
+        ));
+      for (const { participantId } of enrolled) {
+        await recomputeEnrolmentAttendance(tx, training.id, participantId);
       }
     }
 
