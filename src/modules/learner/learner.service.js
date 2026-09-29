@@ -678,14 +678,17 @@ async function findEligibleEnrolment(userId, trainingRef) {
 }
 
 // Shape the render/list payload for one certificate row.
-function certificateDto(r) {
+// `forceIssued` lets a trusted caller (an admin downloading any certificate)
+// render a generated-but-unreleased certificate in full — code, PDUs and all.
+// Learners always pass the default, so the release gate is unchanged for them.
+export function certificateDto(r, { forceIssued = false } = {}) {
   // Generated (a row exists) and released (an admin made it visible) are
   // different things. `issued` is the learner-facing "can I download this?"
   // flag and now needs BOTH — a generated-but-unreleased certificate must look
   // the same to the learner as one that does not exist yet.
   const generated = !!r.certCode;
   const released = !!r.releasedAt;
-  const issued = generated && released;
+  const issued = generated && (released || forceIssued);
   return {
     training_id: r.trainingId,
     training_code: r.code,

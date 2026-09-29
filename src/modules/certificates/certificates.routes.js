@@ -27,6 +27,10 @@ router.post("/trainings/:trainingRef/generate", asyncHandler(ctrl.generate));
 // Make them visible to learners. Body may carry `enrolment_ids` for a subset.
 router.post("/trainings/:trainingRef/release", asyncHandler(ctrl.release));
 
+// Printable data for one certificate (the admin download path). Available once
+// generated, whether or not released; does not affect the learner download_count.
+router.get("/:certificateId/printable", asyncHandler(ctrl.printable));
+
 // Per-certificate actions.
 router.post("/:certificateId/revoke", asyncHandler(ctrl.revoke));
 router.patch("/:certificateId", asyncHandler(ctrl.update));

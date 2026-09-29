@@ -1349,6 +1349,16 @@ A certificate moves through three states: **not generated → generated → rele
 | `POST` | `/api/admin/certificates/trainings/:trainingRef/release` | Make them visible to learners |
 | `POST` | `/api/admin/certificates/:certificateId/revoke` | Take a released certificate back |
 | `PATCH` | `/api/admin/certificates/:certificateId` | Correct an issued certificate |
+| `GET` | `/api/admin/certificates/:certificateId/printable` | Printable data for one certificate (admin download) |
+
+### 3.9.0 `GET /api/admin/certificates/:certificateId/printable`
+
+Returns `{ certificate }` — the **same printable shape the learner download uses** ([§ learner certificate](#)), so the admin renders and downloads a pixel-identical PDF. `:certificateId` may be the UUID or the certificate code.
+
+- **Available once the certificate is generated**, whether or not it has been released — an admin can download/QA before release. (The learner path still requires release + survey.)
+- Bypasses the learner survey/ownership gate and prints the certificate **in full** (code, PDUs) even when unreleased.
+- **Does not** increment the learner-facing `download_count`.
+- **Errors:** `404` no such certificate · `401`/`403`
 
 ### 3.9.1 `PUT /api/admin/certificates/trainings/:trainingRef/pdus`
 

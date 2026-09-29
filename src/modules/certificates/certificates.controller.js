@@ -19,6 +19,10 @@ export async function trainingDetail(req, res) {
   res.json(await svc.getTrainingCertificates(req.params.trainingRef));
 }
 
+export async function printable(req, res) {
+  res.json(await svc.getPrintableCertificate(req.params.certificateId));
+}
+
 export async function generate(req, res) {
   const body = generateCertificatesSchema.parse(req.body ?? {});
   const result = await svc.generateCertificates(

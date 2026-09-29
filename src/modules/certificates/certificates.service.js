@@ -34,11 +34,65 @@ import {
   modeOfTraining,
   CERTIFICATE_MODES,
 } from "../../lib/certificates.js";
+// Reuse the learner's printable DTO so an admin download renders exactly what
+// the learner would get. `forceIssued` lets the admin print a generated-but-
+// unreleased certificate in full (for QA before release).
+import { certificateDto } from "../learner/learner.service.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Seats that can hold a certificate. Cancelled/transferred never earn one.
 const ELIGIBLE_ENROLMENT_STATUSES = ["confirmed", "completed"];
+
+/**
+ * Printable data for ANY certificate, by id — the admin download path. Same DTO
+ * shape the learner gets, but with no survey/ownership gate and `forceIssued` so
+ * a generated certificate prints fully whether or not it's been released. Does
+ * NOT touch the learner-facing download_count.
+ */
+export async function getPrintableCertificate(certificateId) {
+  const cond = UUID_RE.test(certificateId)
+    ? eq(certificates.id, certificateId)
+    : eq(certificates.certificateCode, certificateId);
+  const [row] = await db
+    .select({
+      enrolmentUpdatedAt: enrolments.updatedAt,
+      trainingId: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      deliveryMode: trainingIds.deliveryMode,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      eventCode: schedules.externalEventCode,
+      eventId: schedules.externalEventId,
+      sessionDates: schedules.sessionDates,
+      participantName: participants.name,
+      certCode: certificates.certificateCode,
+      certActivity: certificates.activityCode,
+      issuedAt: certificates.issuedAt,
+      certId: certificates.id,
+      releasedAt: certificates.releasedAt,
+      learnerNameOverride: certificates.learnerNameOverride,
+      courseTitleOverride: certificates.courseTitleOverride,
+      trademarkName: certificates.trademarkName,
+      certPdus: certificates.pdus,
+      certPduClaimCode: certificates.pduClaimCode,
+      certMode: certificates.certificateMode,
+      courseType: courses.courseType,
+      certificationIncluded: courses.certificationIncluded,
+    })
+    .from(certificates)
+    .innerJoin(enrolments, eq(certificates.enrolmentId, enrolments.id))
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .innerJoin(trainingIds, eq(enrolments.trainingId, trainingIds.id))
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(courses, eq(courses.slug, trainingIds.courseSlug))
+    .where(cond)
+    .limit(1);
+
+  if (!row) throw new AppError("Certificate not found", 404);
+  return { certificate: certificateDto(row, { forceIssued: true }) };
+}
 
 /**
  * The PMI logo and "certified" wording print only for a certification course.
