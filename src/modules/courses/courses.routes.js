@@ -21,6 +21,7 @@ router.get(
    Admin — course catalogue (local mirror of the CMS)
    ───────────────────────────────────────────────────────── */
 router.get("/", verifyToken, requireRole("admin"), asyncHandler(ctrl.listCourses));
+router.post("/", verifyToken, requireRole("admin"), asyncHandler(ctrl.createCourse));
 router.post("/sync", verifyToken, requireRole("admin"), asyncHandler(ctrl.syncCourses));
 
 /* ─────────────────────────────────────────────────────────
@@ -71,6 +72,10 @@ router.post(
 router.get(
   "/:courseRef",
   verifyToken, requireRole("admin"), asyncHandler(ctrl.getCourse)
+);
+router.patch(
+  "/:courseRef",
+  verifyToken, requireRole("admin"), asyncHandler(ctrl.updateCourse)
 );
 
 export default router;

@@ -2,6 +2,8 @@ import {
   uploadUrlSchema,
   createResourceSchema,
   updateResourceSchema,
+  createCourseSchema,
+  updateCourseSchema,
 } from "./courses.schema.js";
 import * as courseService from "./courses.service.js";
 
@@ -12,6 +14,16 @@ export async function listCourses(req, res) {
 
 export async function getCourse(req, res) {
   res.json(await courseService.getCourse(req.params.courseRef));
+}
+
+export async function createCourse(req, res) {
+  const body = createCourseSchema.parse(req.body);
+  res.status(201).json(await courseService.createCourse(body, req.user.user_id, req.ip));
+}
+
+export async function updateCourse(req, res) {
+  const body = updateCourseSchema.parse(req.body);
+  res.json(await courseService.updateCourse(req.params.courseRef, body, req.user.user_id, req.ip));
 }
 
 export async function syncCourses(req, res) {

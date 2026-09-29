@@ -87,6 +87,110 @@ export async function getCourse(ref) {
 }
 
 /**
+ * Create a locally-defined course — one that arrives via CRM orders but isn't in
+ * the CMS. Stored with no cms_id / last_synced_at so it's distinguishable from a
+ * synced course. Certificates and learner views join live by slug, so defining a
+ * course here makes course_type / catalogue info appear on existing trainings and
+ * certificates for that slug immediately — no backfill needed.
+ *
+ * If the slug later appears in a CMS sync, the CMS values overwrite these
+ * (CMS remains the source of truth).
+ */
+export async function createCourse(body, userId, ip) {
+  const values = {
+    slug: body.slug,
+    name: body.name,
+    shortName: body.short_name ?? null,
+    description: body.description ?? null,
+    courseType: body.course_type ?? null,
+    certificationIncluded: body.certification_included ?? false,
+    durationHours: body.duration_hours ?? null,
+    categoryName: body.category_name ?? null,
+    categorySlug: body.category_slug ?? null,
+    iconUrl: body.icon_url ?? null,
+    bannerImageUrl: body.banner_image_url ?? null,
+    isActive: body.is_active ?? true,
+    cmsId: null, // locally defined — not from the CMS
+    lastSyncedAt: null,
+  };
+
+  let row;
+  try {
+    [row] = await db.insert(courses).values(values).returning();
+  } catch (e) {
+    // Unique violation on the slug — the course (CMS or local) already exists.
+    if (e?.code === "23505") {
+      throw new AppError("A course with this slug already exists", 409);
+    }
+    throw e;
+  }
+
+  await writeAudit(db, {
+    entityType: "course",
+    entityId: row.id,
+    action: "create",
+    actorId: userId,
+    after: { slug: row.slug, name: row.name, source: "manual" },
+    ipAddress: ip,
+  });
+
+  return { course: publicCourse(row) };
+}
+
+/**
+ * Update a course's metadata (duration, category, course_type, certification,
+ * activation, etc.). `slug` is immutable — it's the join key everything links by.
+ * Works on any course row (CMS-synced or locally defined); note a later CMS sync
+ * will overwrite fields for a synced slug.
+ */
+export async function updateCourse(ref, body, userId, ip) {
+  const existing = await resolveCourse(ref); // 404s if not found
+
+  const set = { updatedAt: new Date() };
+  if (body.name !== undefined) set.name = body.name;
+  if (body.short_name !== undefined) set.shortName = body.short_name;
+  if (body.description !== undefined) set.description = body.description;
+  if (body.course_type !== undefined) set.courseType = body.course_type;
+  if (body.certification_included !== undefined) set.certificationIncluded = body.certification_included;
+  if (body.duration_hours !== undefined) set.durationHours = body.duration_hours;
+  if (body.category_name !== undefined) set.categoryName = body.category_name;
+  if (body.category_slug !== undefined) set.categorySlug = body.category_slug;
+  if (body.icon_url !== undefined) set.iconUrl = body.icon_url;
+  if (body.banner_image_url !== undefined) set.bannerImageUrl = body.banner_image_url;
+  if (body.is_active !== undefined) set.isActive = body.is_active;
+
+  const [row] = await db
+    .update(courses)
+    .set(set)
+    .where(eq(courses.id, existing.id))
+    .returning();
+
+  await writeAudit(db, {
+    entityType: "course",
+    entityId: existing.id,
+    action: "update",
+    actorId: userId,
+    before: {
+      name: existing.name,
+      course_type: existing.courseType,
+      certification_included: existing.certificationIncluded,
+      duration_hours: existing.durationHours,
+      is_active: existing.isActive,
+    },
+    after: {
+      name: row.name,
+      course_type: row.courseType,
+      certification_included: row.certificationIncluded,
+      duration_hours: row.durationHours,
+      is_active: row.isActive,
+    },
+    ipAddress: ip,
+  });
+
+  return { course: publicCourse(row) };
+}
+
+/**
  * Pull the course catalogue from the CMS and upsert every course by slug.
  * Additive/idempotent — existing resources are untouched. Returns a summary.
  */

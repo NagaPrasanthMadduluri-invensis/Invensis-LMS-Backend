@@ -1373,6 +1373,50 @@ Unauthenticated (rate-limited, 30/min). Backs the QR code printed on every certi
 
 ---
 
+## 3.10 Course catalogue (admin) — `/api/courses`
+
+The local course catalogue is a mirror keyed by **`slug`**. It is normally filled by **Sync from CMS**, but courses that arrive only through **CRM orders** (never present in the CMS) can be defined here by hand — that is what supplies their `course_type` / `is_certification`, duration and category. Certificates and learner views join the catalogue **live by slug**, so defining a course makes that info appear on existing trainings and certificates for the same slug immediately (no backfill). Every route requires a Bearer token and role `admin`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/courses` | List the local catalogue (CMS-synced + locally defined) |
+| `GET` | `/api/courses/:courseRef` | One course by UUID or slug |
+| `POST` | `/api/courses` | Create a locally-defined course |
+| `PATCH` | `/api/courses/:courseRef` | Update a course's metadata |
+| `POST` | `/api/courses/sync` | Upsert the catalogue from the CMS (by slug) |
+
+**Ordering & the CMS relationship.** A locally-defined course is stored with `cms_id: null` / `last_synced_at: null`. If its slug later appears in a CMS sync, **the CMS values overwrite it** — the CMS stays the source of truth. There is no delete: retire a course with `PATCH { "is_active": false }`.
+
+### 3.10.1 `POST /api/courses`
+
+Creates a course that isn't in the CMS. `slug` is the join key — it **must match the slug the CRM order carries** for trainings/resources/certificates to link.
+
+- **Body:**
+
+  | Field | Type | Notes |
+  |---|---|---|
+  | `slug` | string, **required** | Unique join key; matches the order's course slug |
+  | `name` | string, **required** | |
+  | `course_type` | `"certification"` \| `"training_only"`, or `null` | Drives `is_certification` on certificates |
+  | `certification_included` | boolean (default `false`) | |
+  | `duration_hours` | positive int, or `null` | |
+  | `category_name` / `category_slug` | string, or `null` | |
+  | `short_name` · `description` · `icon_url` · `banner_image_url` | string/URL, or `null` | Optional |
+  | `is_active` | boolean (default `true`) | |
+
+- **Returns** `201` with `{ "course": { … } }` (`cms_id` and `last_synced_at` are `null`).
+- **Errors:** `409` slug already exists (CMS or local) · `422` invalid body · `401`/`403`
+
+### 3.10.2 `PATCH /api/courses/:courseRef`
+
+Updates any subset of the fields above **except `slug`** (immutable — changing it would orphan existing trainings/resources/certificates). Works on any course (CMS-synced or local), but note a later CMS sync will overwrite a synced slug.
+
+- **Body:** any subset of the create fields minus `slug`; **at least one field required**.
+- **Returns** `200` with the updated `{ "course": { … } }`.
+- **Errors:** `422` empty body / invalid value · `404` unknown course · `401`/`403`
+
+---
+
 ## 4. Frontend integration
 
 ### 4.1 Recommended flow

@@ -6,3 +6,6 @@ node_modules/
 portal/
 EXTRA/
 CLAUDE.md
+
+# Local-only test harness — never committed
+_localtests/
