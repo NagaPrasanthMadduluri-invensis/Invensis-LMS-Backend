@@ -3004,9 +3004,24 @@ export async function getTrainingAttendance(trainingRef) {
 // Learners who are still in the cohort (cancelled/transferred are dropped).
 const EMAILABLE_ENROLMENT_STATUSES = ["confirmed", "completed"];
 
+// Collect recipients, de-duplicated by email address (case-insensitive) — a
+// person who is both a learner and a sponsor (or the buyer of two orders) must
+// appear only once. First role added wins.
+function recipientCollector() {
+  const list = [];
+  const seen = new Set();
+  const add = (r) => {
+    const key = (r.email || "").trim().toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    list.push(r);
+  };
+  return { list, add };
+}
+
 // Trainer + active learners + sponsors of a training, as selectable recipients.
 async function trainingRecipientList(trainingId) {
-  const list = [];
+  const { list, add } = recipientCollector();
 
   const [trainer] = await db
     .select({ userId: users.id, name: users.name, email: users.email })
@@ -3015,9 +3030,7 @@ async function trainingRecipientList(trainingId) {
     .innerJoin(users, eq(trainers.userId, users.id))
     .where(and(eq(trainerAssignments.trainingId, trainingId), isNull(trainerAssignments.removedAt)))
     .limit(1);
-  if (trainer?.email) {
-    list.push({ id: `trainer:${trainer.userId}`, name: trainer.name, email: trainer.email, role: "trainer" });
-  }
+  if (trainer) add({ id: `trainer:${trainer.userId}`, name: trainer.name, email: trainer.email, role: "trainer" });
 
   const learners = await db
     .select({ participantId: participants.id, name: participants.name, email: participants.email })
@@ -3027,24 +3040,14 @@ async function trainingRecipientList(trainingId) {
       eq(enrolments.trainingId, trainingId),
       inArray(enrolments.status, EMAILABLE_ENROLMENT_STATUSES)
     ));
-  const seenLearner = new Set();
-  for (const l of learners) {
-    if (!l.email || seenLearner.has(l.participantId)) continue;
-    seenLearner.add(l.participantId);
-    list.push({ id: `learner:${l.participantId}`, name: l.name, email: l.email, role: "learner" });
-  }
+  for (const l of learners) add({ id: `learner:${l.participantId}`, name: l.name, email: l.email, role: "learner" });
 
   const sponsors = await db
     .selectDistinct({ userId: users.id, name: users.name, email: users.email })
     .from(orders)
     .innerJoin(users, eq(orders.sponsorUserId, users.id))
     .where(eq(orders.trainingId, trainingId));
-  const seenSponsor = new Set();
-  for (const s of sponsors) {
-    if (!s.email || seenSponsor.has(s.userId)) continue;
-    seenSponsor.add(s.userId);
-    list.push({ id: `sponsor:${s.userId}`, name: s.name, email: s.email, role: "sponsor" });
-  }
+  for (const s of sponsors) add({ id: `sponsor:${s.userId}`, name: s.name, email: s.email, role: "sponsor" });
 
   return list;
 }
@@ -3063,8 +3066,8 @@ async function participantRecipientList(participantId) {
     .limit(1);
   if (!p) throw new AppError("Participant not found", 404);
 
-  const list = [];
-  if (p.email) list.push({ id: `learner:${p.id}`, name: p.name, email: p.email, role: "learner" });
+  const { list, add } = recipientCollector();
+  add({ id: `learner:${p.id}`, name: p.name, email: p.email, role: "learner" });
 
   const sponsors = await db
     .selectDistinct({ userId: users.id, name: users.name, email: users.email })
@@ -3072,12 +3075,7 @@ async function participantRecipientList(participantId) {
     .innerJoin(orders, eq(enrolments.orderId, orders.id))
     .innerJoin(users, eq(orders.sponsorUserId, users.id))
     .where(eq(enrolments.participantId, participantId));
-  const seen = new Set();
-  for (const s of sponsors) {
-    if (!s.email || seen.has(s.userId)) continue;
-    seen.add(s.userId);
-    list.push({ id: `sponsor:${s.userId}`, name: s.name, email: s.email, role: "sponsor" });
-  }
+  for (const s of sponsors) add({ id: `sponsor:${s.userId}`, name: s.name, email: s.email, role: "sponsor" });
 
   return list;
 }
@@ -3095,11 +3093,16 @@ function selectRecipients(all, recipientIds) {
   return chosen;
 }
 
-// One email per recipient; best-effort — a single failure never aborts the rest.
+// One email per unique recipient address; best-effort — a single failure never
+// aborts the rest. De-dupes by email as a safety net (the resolvers already do).
 async function deliverComposed(recipients, subject, message) {
   let sent = 0;
   const failed = [];
+  const seen = new Set();
   for (const r of recipients) {
+    const key = (r.email || "").trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
     try {
       await sendComposedEmail({ to: r.email, subject, message });
       sent += 1;

@@ -181,7 +181,6 @@ function messageToParagraphs(message = "") {
 export async function sendComposedEmail({ to, subject, message }) {
   const safeSubject = escapeHtml(subject);
   const contentHtml =
-    cohortHead("Invensis Learning", safeSubject) +
     messageToParagraphs(message) +
     cohortSignoff("Warm regards,", "The Invensis Learning Team");
   return sendMail({
