@@ -23,6 +23,7 @@ import { provisionAccountSetup, sendAccountSetupLink } from "../../lib/account-s
 import { courseIdentifierFor, issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
+import { sendComposedEmail } from "../../lib/mailer.js";
 import {
   notifyJoinLinkReleased,
   notifyTrainerAssigned,
@@ -2987,4 +2988,174 @@ export async function getTrainingAttendance(trainingRef) {
       };
     }),
   };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Admin-composed emails
+   ─────────────────────────────────────────────────────────
+   Send a free-text message (subject + body) to recipients drawn from a
+   training, a participant, or a trainer. Recipients are ALWAYS resolved
+   server-side from the context; the client only sends opaque recipient ids
+   of the form "role:uuid", so no arbitrary address can ever be emailed.
+   Each recipient receives an individual email (no shared To/BCC), sent from
+   operations@invensislearning.com (see lib/mailer.js → sendComposedEmail).
+   ───────────────────────────────────────────────────────── */
+
+// Learners who are still in the cohort (cancelled/transferred are dropped).
+const EMAILABLE_ENROLMENT_STATUSES = ["confirmed", "completed"];
+
+// Trainer + active learners + sponsors of a training, as selectable recipients.
+async function trainingRecipientList(trainingId) {
+  const list = [];
+
+  const [trainer] = await db
+    .select({ userId: users.id, name: users.name, email: users.email })
+    .from(trainerAssignments)
+    .innerJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(and(eq(trainerAssignments.trainingId, trainingId), isNull(trainerAssignments.removedAt)))
+    .limit(1);
+  if (trainer?.email) {
+    list.push({ id: `trainer:${trainer.userId}`, name: trainer.name, email: trainer.email, role: "trainer" });
+  }
+
+  const learners = await db
+    .select({ participantId: participants.id, name: participants.name, email: participants.email })
+    .from(enrolments)
+    .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .where(and(
+      eq(enrolments.trainingId, trainingId),
+      inArray(enrolments.status, EMAILABLE_ENROLMENT_STATUSES)
+    ));
+  const seenLearner = new Set();
+  for (const l of learners) {
+    if (!l.email || seenLearner.has(l.participantId)) continue;
+    seenLearner.add(l.participantId);
+    list.push({ id: `learner:${l.participantId}`, name: l.name, email: l.email, role: "learner" });
+  }
+
+  const sponsors = await db
+    .selectDistinct({ userId: users.id, name: users.name, email: users.email })
+    .from(orders)
+    .innerJoin(users, eq(orders.sponsorUserId, users.id))
+    .where(eq(orders.trainingId, trainingId));
+  const seenSponsor = new Set();
+  for (const s of sponsors) {
+    if (!s.email || seenSponsor.has(s.userId)) continue;
+    seenSponsor.add(s.userId);
+    list.push({ id: `sponsor:${s.userId}`, name: s.name, email: s.email, role: "sponsor" });
+  }
+
+  return list;
+}
+
+export async function getTrainingEmailRecipients(trainingRef) {
+  const training = await resolveTraining(db, trainingRef);
+  return { recipients: await trainingRecipientList(training.id) };
+}
+
+// A participant (learner) + their sponsor(s), as selectable recipients.
+async function participantRecipientList(participantId) {
+  const [p] = await db
+    .select({ id: participants.id, name: participants.name, email: participants.email })
+    .from(participants)
+    .where(eq(participants.id, participantId))
+    .limit(1);
+  if (!p) throw new AppError("Participant not found", 404);
+
+  const list = [];
+  if (p.email) list.push({ id: `learner:${p.id}`, name: p.name, email: p.email, role: "learner" });
+
+  const sponsors = await db
+    .selectDistinct({ userId: users.id, name: users.name, email: users.email })
+    .from(enrolments)
+    .innerJoin(orders, eq(enrolments.orderId, orders.id))
+    .innerJoin(users, eq(orders.sponsorUserId, users.id))
+    .where(eq(enrolments.participantId, participantId));
+  const seen = new Set();
+  for (const s of sponsors) {
+    if (!s.email || seen.has(s.userId)) continue;
+    seen.add(s.userId);
+    list.push({ id: `sponsor:${s.userId}`, name: s.name, email: s.email, role: "sponsor" });
+  }
+
+  return list;
+}
+
+export async function getParticipantEmailRecipients(participantId) {
+  return { recipients: await participantRecipientList(participantId) };
+}
+
+// Restrict the requested ids to the context's actual recipients — the guard that
+// stops an arbitrary or stale id from reaching an address it shouldn't.
+function selectRecipients(all, recipientIds) {
+  const wanted = new Set(recipientIds ?? []);
+  const chosen = all.filter((r) => wanted.has(r.id));
+  if (chosen.length === 0) throw new AppError("No valid recipients selected", 422);
+  return chosen;
+}
+
+// One email per recipient; best-effort — a single failure never aborts the rest.
+async function deliverComposed(recipients, subject, message) {
+  let sent = 0;
+  const failed = [];
+  for (const r of recipients) {
+    try {
+      await sendComposedEmail({ to: r.email, subject, message });
+      sent += 1;
+    } catch (e) {
+      failed.push({ email: r.email, error: e.message });
+      console.error(`[admin] composed email to ${r.email} failed: ${e.message}`);
+    }
+  }
+  return { sent, failed };
+}
+
+export async function sendTrainingEmail(adminId, trainingRef, { subject, message, recipient_ids }, ip) {
+  const training = await resolveTraining(db, trainingRef);
+  const chosen = selectRecipients(await trainingRecipientList(training.id), recipient_ids);
+  const { sent, failed } = await deliverComposed(chosen, subject, message);
+  await writeAudit(db, {
+    entityType: "training_id",
+    entityId: training.id,
+    action: "email_sent",
+    actorId: adminId,
+    after: { subject, recipients: chosen.length, sent, failed: failed.length },
+    ipAddress: ip,
+  });
+  return { recipients: chosen.length, sent, failed };
+}
+
+export async function sendParticipantEmail(adminId, participantId, { subject, message, recipient_ids }, ip) {
+  const chosen = selectRecipients(await participantRecipientList(participantId), recipient_ids);
+  const { sent, failed } = await deliverComposed(chosen, subject, message);
+  await writeAudit(db, {
+    entityType: "participant",
+    entityId: participantId,
+    action: "email_sent",
+    actorId: adminId,
+    after: { subject, recipients: chosen.length, sent, failed: failed.length },
+    ipAddress: ip,
+  });
+  return { recipients: chosen.length, sent, failed };
+}
+
+export async function sendTrainerEmail(adminId, trainerId, { subject, message }, ip) {
+  const [t] = await db
+    .select({ userId: users.id, name: users.name, email: users.email })
+    .from(trainers)
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(eq(trainers.id, trainerId))
+    .limit(1);
+  if (!t?.email) throw new AppError("Trainer not found", 404);
+  const { sent, failed } = await deliverComposed([{ email: t.email }], subject, message);
+  await writeAudit(db, {
+    entityType: "trainer",
+    entityId: trainerId,
+    action: "email_sent",
+    actorId: adminId,
+    after: { subject, recipients: 1, sent, failed: failed.length },
+    ipAddress: ip,
+  });
+  return { recipients: 1, sent, failed };
 }

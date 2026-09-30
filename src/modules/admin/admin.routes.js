@@ -121,6 +121,38 @@ router.get(
   asyncHandler(ctrl.getTrainingDetail)
 );
 
+/* ── Admin-composed emails ── */
+router.get(
+  "/trainings/:trainingId/email-recipients",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getTrainingEmailRecipients)
+);
+router.post(
+  "/trainings/:trainingId/email",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.sendTrainingEmail)
+);
+router.get(
+  "/participants/:participantId/email-recipients",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getParticipantEmailRecipients)
+);
+router.post(
+  "/participants/:participantId/email",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.sendParticipantEmail)
+);
+router.post(
+  "/trainers/:trainerId/email",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.sendTrainerEmail)
+);
+
 router.post(
   "/trainings/:trainingId/participants",
   verifyToken,

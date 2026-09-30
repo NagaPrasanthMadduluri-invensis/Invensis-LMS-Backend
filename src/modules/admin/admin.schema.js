@@ -180,3 +180,17 @@ export const createSurveySchema = z.object({
   title: z.string().trim().min(1, "Title is required"),
   questions: z.array(z.object({}).passthrough()).min(1, "At least one question is required"),
 });
+
+// Admin-composed email. `recipient_ids` are opaque "role:uuid" tokens the
+// recipients endpoint returned; the service validates them against the context.
+export const composeEmailSchema = z.object({
+  subject: z.string().trim().min(1).max(200),
+  message: z.string().trim().min(1).max(5000),
+  recipient_ids: z.array(z.string().trim().min(1).max(100)).min(1).max(500),
+});
+
+// Trainer page: the only recipient is the trainer, so no recipient list.
+export const trainerEmailSchema = z.object({
+  subject: z.string().trim().min(1).max(200),
+  message: z.string().trim().min(1).max(5000),
+});

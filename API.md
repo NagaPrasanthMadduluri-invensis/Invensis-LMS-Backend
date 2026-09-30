@@ -1427,6 +1427,27 @@ Updates any subset of the fields above **except `slug`** (immutable — changing
 
 ---
 
+## 3.11 Admin-composed emails — `/api/admin`
+
+Lets an admin compose a free-text message (subject + body) and send it to recipients drawn from a training, a participant, or a trainer. Sent **FROM `operations@invensislearning.com`** through the branded email shell — one individual email per recipient (no recipient sees another's address). Existing transactional emails (setup/reset/cohort) are unaffected. Every route requires a Bearer token and role `admin`.
+
+**Security:** recipients are always resolved **server-side** from the context. The client only sends opaque **`recipient_id`** tokens (`"role:uuid"`) returned by the recipients endpoint; the server intersects the request with the context's real recipients, so an unknown/stale id can never reach an arbitrary address.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/admin/trainings/:trainingId/email-recipients` | Trainer + **active** learners (confirmed/completed) + sponsors, as selectable recipients |
+| `POST` | `/api/admin/trainings/:trainingId/email` | Send to selected training recipients |
+| `GET` | `/api/admin/participants/:participantId/email-recipients` | The learner + their sponsor(s) |
+| `POST` | `/api/admin/participants/:participantId/email` | Send to selected participant recipients |
+| `POST` | `/api/admin/trainers/:trainerId/email` | Send to that trainer only |
+
+- **Recipients response:** `{ "recipients": [ { "id": "learner:<uuid>", "name": "...", "email": "...", "role": "learner|sponsor|trainer" } ] }`. Cancelled/transferred learners are excluded.
+- **Send body:** `{ "subject": string(1–200), "message": string(1–5000), "recipient_ids": string[] }` — the trainer endpoint omits `recipient_ids` (the trainer is the only recipient).
+- **Send response:** `{ "recipients": <selected count>, "sent": <delivered>, "failed": [ { "email", "error" } ] }`. Delivery is best-effort per recipient; a single failure doesn't abort the rest.
+- **Errors:** `422` empty subject/message, no valid recipient selected, or invalid body · `404` unknown training/participant/trainer · `401`/`403`.
+
+---
+
 ## 4. Frontend integration
 
 ### 4.1 Recommended flow

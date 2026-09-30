@@ -11,6 +11,8 @@ import {
   createSurveySchema,
   setTrainingStatusSchema,
   rescheduleTrainingSchema,
+  composeEmailSchema,
+  trainerEmailSchema,
 } from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
 
@@ -181,4 +183,28 @@ export async function transferEnrolment(req, res) {
     req.ip
   );
   res.json(result);
+}
+
+/* ── Admin-composed emails ── */
+export async function getTrainingEmailRecipients(req, res) {
+  res.json(await adminService.getTrainingEmailRecipients(req.params.trainingId));
+}
+
+export async function sendTrainingEmail(req, res) {
+  const body = composeEmailSchema.parse(req.body);
+  res.json(await adminService.sendTrainingEmail(req.user.user_id, req.params.trainingId, body, req.ip));
+}
+
+export async function getParticipantEmailRecipients(req, res) {
+  res.json(await adminService.getParticipantEmailRecipients(req.params.participantId));
+}
+
+export async function sendParticipantEmail(req, res) {
+  const body = composeEmailSchema.parse(req.body);
+  res.json(await adminService.sendParticipantEmail(req.user.user_id, req.params.participantId, body, req.ip));
+}
+
+export async function sendTrainerEmail(req, res) {
+  const body = trainerEmailSchema.parse(req.body);
+  res.json(await adminService.sendTrainerEmail(req.user.user_id, req.params.trainerId, body, req.ip));
 }

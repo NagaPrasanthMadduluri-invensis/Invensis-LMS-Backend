@@ -37,8 +37,8 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendMail({ to, cc, subject, text, html }) {
-  const msg = { from: env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html };
+async function sendMail({ from, to, cc, subject, text, html }) {
+  const msg = { from: from ?? env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html };
   if (cc) msg.cc = cc; // optional CC (e.g. a learner's sponsor on info emails)
   await getTransporter().sendMail(msg);
   return msg;
@@ -148,6 +148,50 @@ const cohortAmber = (html) =>
 const cohortSignoff = (line, name) =>
   `<p style="margin:24px 0 0;font:400 15px/1.6 ${FONT};color:#374151;">${line}<br><strong style="color:#101030;">${name}</strong></p>`;
 const firstNameOf = (name) => (name || "").trim().split(/\s+/)[0] || "there";
+
+/* ── Admin-composed free-text email ──────────────────────────────
+   Sent from the operations mailbox (so replies reach the team) rather than the
+   transactional no-reply. The body is whatever an admin typed, HTML-escaped and
+   wrapped in the shared branded shell. */
+const COMPOSED_FROM = "Invensis Learning <operations@invensislearning.com>";
+
+function escapeHtml(s = "") {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Blank line → new paragraph; single newline → <br>. Escaped first, so no
+// admin input is ever rendered as markup.
+function messageToParagraphs(message = "") {
+  return String(message)
+    .split(/\n{2,}/)
+    .map((para) => cohortPara(escapeHtml(para).replace(/\n/g, "<br>")))
+    .join("");
+}
+
+/**
+ * An admin-composed email (subject + free-text body) sent to one recipient from
+ * the portal, FROM operations@invensislearning.com. Callers send one per
+ * recipient so no recipient sees another's address.
+ */
+export async function sendComposedEmail({ to, subject, message }) {
+  const safeSubject = escapeHtml(subject);
+  const contentHtml =
+    cohortHead("Invensis Learning", safeSubject) +
+    messageToParagraphs(message) +
+    cohortSignoff("Warm regards,", "The Invensis Learning Team");
+  return sendMail({
+    from: COMPOSED_FROM,
+    to,
+    subject,
+    text: message,
+    html: renderEmail({ subject, preheader: safeSubject, contentHtml }),
+  });
+}
 
 // K1 — meeting/join link released to the cohort's learners.
 export async function sendJoinLinkEmail(recipient, ctx) {
