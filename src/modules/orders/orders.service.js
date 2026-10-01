@@ -217,6 +217,7 @@ export async function ingestOrder(actorId, payload, ip) {
       .values({
         externalOrderId: payload.order_id,
         customerId: payload.customer_id ?? null,
+        agentName: payload.customer?.agent ?? null,
         courseName: payload.course.course_name,
         paymentStatus,
         scheduleId: schedule.id,
@@ -225,7 +226,13 @@ export async function ingestOrder(actorId, payload, ip) {
       })
       .onConflictDoUpdate({
         target: orders.externalOrderId,
-        set: { paymentStatus, scheduleId: schedule.id, trainingId: training.id, updatedAt: new Date() },
+        set: {
+          paymentStatus,
+          agentName: payload.customer?.agent ?? null,
+          scheduleId: schedule.id,
+          trainingId: training.id,
+          updatedAt: new Date(),
+        },
       })
       .returning();
 

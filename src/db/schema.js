@@ -331,6 +331,7 @@ export const orders = pgTable("orders", {
   externalOrderId: text("external_order_id").notNull().unique(), // INV-20260608-VE2Q3H
   customerId: text("customer_id"),
   sponsorUserId: uuid("sponsor_user_id").references(() => users.id), // the buyer
+  agentName: text("agent_name"), // CRM sales agent (customer.agent); null on older orders
   courseName: text("course_name"),
   paymentStatus: text("payment_status").notNull(),
   scheduleId: uuid("schedule_id").references(() => schedules.id),

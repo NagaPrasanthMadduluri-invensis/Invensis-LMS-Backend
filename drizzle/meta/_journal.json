@@ -239,6 +239,13 @@
       "when": 1790252115381,
       "tag": "0033_certificate_trademark_name",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790838976121,
+      "tag": "0034_awesome_master_mold",
+      "breakpoints": true
     }
   ]
 }

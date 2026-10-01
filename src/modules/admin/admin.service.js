@@ -1379,6 +1379,18 @@ export async function listParticipants({ search, page, limit, location, job_titl
          ORDER BY e.enrolled_at DESC, e.id DESC
          LIMIT 1
       )`,
+      /* CRM sales agent on this learner's most recent order that carries one.
+         Only orders from the next CRM integration onward have it; older orders
+         (and manually-added enrolments with no order) resolve to null. */
+      agent: sql`(
+        SELECT o.agent_name
+          FROM enrolments e
+          JOIN orders o ON o.id = e.order_id
+         WHERE e.participant_id = ${participants.id}
+           AND o.agent_name IS NOT NULL
+         ORDER BY e.enrolled_at DESC, e.id DESC
+         LIMIT 1
+      )`,
       enrolmentCount,
     })
     .from(participants)
@@ -1441,6 +1453,7 @@ export async function listParticipants({ search, page, limit, location, job_titl
       last_login_at: r.lastLoginAt ?? null,
       sponsor_name: r.sponsor?.name ?? null,
       sponsor_email: r.sponsor?.email ?? null,
+      agent: r.agent ?? null,
       created_at: r.createdAt,
     })),
     total: count,
@@ -1501,6 +1514,16 @@ export async function getParticipantDetail(participantId) {
       department: userProfiles.department,
       yearsExperience: userProfiles.yearsExperience,
       linkedinUrl: userProfiles.linkedinUrl,
+      // CRM sales agent from this learner's most recent order that carries one.
+      agent: sql`(
+        SELECT o.agent_name
+          FROM enrolments e
+          JOIN orders o ON o.id = e.order_id
+         WHERE e.participant_id = ${participants.id}
+           AND o.agent_name IS NOT NULL
+         ORDER BY e.enrolled_at DESC, e.id DESC
+         LIMIT 1
+      )`,
     })
     .from(participants)
     .leftJoin(users, eq(participants.userId, users.id))
@@ -1570,6 +1593,7 @@ export async function getParticipantDetail(participantId) {
       department: p.department ?? null,
       years_experience: p.yearsExperience ?? null,
       linkedin_url: p.linkedinUrl ?? null,
+      agent: p.agent ?? null,
       account_active: p.accountActive ?? false,
       has_password: p.hasPassword ?? false,
       last_login_at: p.lastLoginAt ?? null,

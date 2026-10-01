@@ -871,6 +871,7 @@ List all participants for the admin dashboard — **paginated**, with optional *
         "last_login_at": "2026-09-24T05:54:54.237Z",
         "sponsor_name": "Jennifer Ladanchuk",
         "sponsor_email": "ezra.b@edstellar.com",
+        "agent": "Kevin Smith",
         "created_at": "2026-06-29T05:44:08.605Z"
       }
     ],
@@ -886,6 +887,7 @@ List all participants for the admin dashboard — **paginated**, with optional *
   - `has_password` — `false` means the account was auto-created and the user **hasn't completed setup yet** (setup email pending; see §2.6). Use this to flag "Setup pending" in the dashboard.
   - **`last_login_at`** — instant of the user's last **successful password login**, or `null` if they have never signed in. Not touched by token refresh, so it answers "when did they last sign in", not "when was a request last made for them". Paired with `has_password`, `null` here is what identifies an invitation that was never acted on. *Never back-filled: accounts that logged in before this field existed read `null` until their next sign-in.*
   - **`sponsor_name` / `sponsor_email`** — the buyer who paid for this learner's seat, or `null`. **Self-sponsored seats resolve to `null`** — a learner paying for themselves is not a sponsor. Where a learner has several sponsored enrolments, the **most recent** one wins (ties broken by enrolment id, so the answer is stable between requests).
+  - **`agent`** — the CRM sales agent (`customer.agent`) on this learner's **most recent order that carries one**, or `null`. Only orders received after this field shipped have it; older orders and manually-added enrolments (no order) resolve to `null`. Same field is on the participant detail (`GET /api/admin/participants/:participantId` → `participant.agent`).
   - **`summary`** — counts over the **whole filtered result set**, not the current page. Use these for stat cards; deriving them from `participants[]` describes only the rows on screen.
   - `filters` — distinct values across **all** participants, independent of the current search/page, so filter dropdowns stay complete.
   - `total` is the count **before** pagination. Pagination is **offset-based** (`LIMIT/OFFSET`), so any page can be requested directly — asking for page 30 is a single query and does not fetch the pages before it.
