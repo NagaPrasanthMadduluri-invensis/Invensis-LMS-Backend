@@ -98,6 +98,12 @@ router.patch(
   requireRole("admin"),
   asyncHandler(ctrl.changeParticipantRole)
 );
+router.get(
+  "/participants/:participantId/emails",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.participantEmailTimeline)
+);
 
 router.patch(
   "/enrolments/:enrolmentId/cancel",
@@ -157,6 +163,12 @@ router.post(
   verifyToken,
   requireRole("admin"),
   asyncHandler(ctrl.sendTrainerEmail)
+);
+router.get(
+  "/trainers/:trainerId/emails",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.trainerEmailTimeline)
 );
 
 router.post(

@@ -814,6 +814,15 @@ Switch the learner's linked account between **`learner`** and **`sponsor`**. `ro
 - **`200` response:** `{ "role": "sponsor", "changed": true }` (`changed: false` when already that role — no token bump)
 - **Errors:** `404` participant not found · `409` participant has no account, or the account isn't a learner/sponsor, or you're changing your own role · `422` invalid role · `403` not an admin
 
+### 3.2.8b Email timeline — `GET /api/admin/participants/:participantId/emails` · `GET /api/admin/trainers/:trainerId/emails`
+
+A **live, read-only** view of the `operations@invensislearning.com` mailbox for one person — their replies, manually-sent emails, and the BCC copies of portal-sent emails. **Pulled from Gmail over IMAP on demand** (when the admin opens the Timeline tab); **nothing is stored**. The server searches the mailbox for messages involving that person's own email, so an admin only ever sees that person's correspondence with operations@.
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:** `{ "email": "<person>", "messages": [ { "id", "direction": "inbound"|"outbound", "from": {name,address}, "to": [...], "cc": [...], "subject", "date", "snippet", "text" } ] }` — newest first, capped at ~30. Bodies are **plain text only** (never raw HTML).
+- **Errors:** `404` person not found · **`503`** the operations mailbox isn't configured (no `GMAIL_IMAP_*` env) — the tab shows a "not set up" state · **`502`** the mailbox couldn't be reached/read · `403` not an admin
+- **Config (`.env`, servers only):** `GMAIL_IMAP_USER`, `GMAIL_IMAP_APP_PASSWORD` (+ optional `GMAIL_IMAP_HOST` default `imap.gmail.com`, `GMAIL_IMAP_PORT` 993). Needs IMAP enabled + 2-step verification + an app password on the account.
+
 ### 3.2.9 `PATCH /api/admin/enrolments/:enrolmentId/cancel`
 
 Cancel an enrolment (frees the seat, recomputes `enrolled_count`). **Reason required** and audited.

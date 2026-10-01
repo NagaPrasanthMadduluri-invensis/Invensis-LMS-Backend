@@ -52,6 +52,14 @@ const schema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_SECURE: boolFromEnv.default(false),
 
+  // Operations mailbox (Gmail/Workspace) read over IMAP, for the admin email
+  // timeline. Read-only, on demand. Unset → the timeline endpoints return 503
+  // (not configured) and the tab shows a friendly message.
+  GMAIL_IMAP_HOST: z.string().default("imap.gmail.com"),
+  GMAIL_IMAP_PORT: z.coerce.number().int().positive().default(993),
+  GMAIL_IMAP_USER: z.string().optional(),
+  GMAIL_IMAP_APP_PASSWORD: z.string().optional(),
+
   // Object storage (Cloudflare R2, S3-compatible) for profile photos etc.
   // All optional — if unset, file-upload endpoints return 503 (not configured).
   R2_ACCOUNT_ID: z.string().optional(),

@@ -24,6 +24,7 @@ import { courseIdentifierFor, issueCertificate } from "../../lib/certificates.js
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
 import { sendComposedEmail } from "../../lib/mailer.js";
+import { fetchMailboxFor } from "../../lib/gmail-imap.js";
 import {
   notifyJoinLinkReleased,
   notifyTrainerAssigned,
@@ -3238,4 +3239,31 @@ export async function sendTrainerEmail(adminId, trainerId, { subject, message },
     ipAddress: ip,
   });
   return { recipients: 1, sent, failed };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Email timeline — live, read-only view of the operations mailbox
+   ─────────────────────────────────────────────────────────
+   On-demand (admin opens the tab): pull messages involving this person's email
+   from the operations@ Gmail mailbox over IMAP. Nothing is stored. Covers
+   replies, manual emails, and the BCC copies of portal-sent emails. */
+export async function getParticipantEmailTimeline(participantId) {
+  const [p] = await db
+    .select({ email: participants.email, name: participants.name })
+    .from(participants)
+    .where(eq(participants.id, participantId))
+    .limit(1);
+  if (!p) throw new AppError("Participant not found", 404);
+  return { email: p.email, messages: await fetchMailboxFor(p.email) };
+}
+
+export async function getTrainerEmailTimeline(trainerId) {
+  const [t] = await db
+    .select({ email: users.email, name: users.name })
+    .from(trainers)
+    .innerJoin(users, eq(trainers.userId, users.id))
+    .where(eq(trainers.id, trainerId))
+    .limit(1);
+  if (!t) throw new AppError("Trainer not found", 404);
+  return { email: t.email, messages: await fetchMailboxFor(t.email) };
 }

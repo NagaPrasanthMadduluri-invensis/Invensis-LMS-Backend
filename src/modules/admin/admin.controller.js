@@ -215,3 +215,12 @@ export async function changeParticipantRole(req, res) {
   const body = changeRoleSchema.parse(req.body);
   res.json(await adminService.changeParticipantRole(req.user.user_id, req.params.participantId, body, req.ip));
 }
+
+/* ── Email timeline (live operations mailbox) ── */
+export async function participantEmailTimeline(req, res) {
+  res.json(await adminService.getParticipantEmailTimeline(req.params.participantId));
+}
+
+export async function trainerEmailTimeline(req, res) {
+  res.json(await adminService.getTrainerEmailTimeline(req.params.trainerId));
+}
