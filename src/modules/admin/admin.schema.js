@@ -194,3 +194,8 @@ export const trainerEmailSchema = z.object({
   subject: z.string().trim().min(1).max(200),
   message: z.string().trim().min(1).max(5000),
 });
+
+// Switch a learner/sponsor account's landing role (learner <-> sponsor only).
+export const changeRoleSchema = z.object({
+  role: z.enum(["learner", "sponsor"]),
+});

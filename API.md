@@ -805,6 +805,15 @@ Edit a participant's details. **Email is not editable here** (it's the login ide
 - **`200` response:** `{ "participant": { "id", "user_id", "name", "email", "phone", "job_title" } }`
 - **Errors:** `404` participant not found · `422` empty/invalid body · `403` not an admin
 
+### 3.2.8a `PATCH /api/admin/participants/:participantId/role`
+
+Switch the learner's linked account between **`learner`** and **`sponsor`**. `role` here is only the **default landing portal** — actual access stays capability-derived (a sponsor with orders keeps sponsor access, a learner with enrolments keeps learner access), so this changes where the account lands, not what it can reach. Bumps the account's `token_version`, so the change takes effect on their next request (forces a re-login). The learner detail (`GET /api/admin/participants/:participantId`) now returns `participant.role` and `participant.user_id` to drive the switch.
+
+- **Auth:** Bearer access token · role `admin`
+- **Body:** `{ "role": "learner" | "sponsor" }`
+- **`200` response:** `{ "role": "sponsor", "changed": true }` (`changed: false` when already that role — no token bump)
+- **Errors:** `404` participant not found · `409` participant has no account, or the account isn't a learner/sponsor, or you're changing your own role · `422` invalid role · `403` not an admin
+
 ### 3.2.9 `PATCH /api/admin/enrolments/:enrolmentId/cancel`
 
 Cancel an enrolment (frees the seat, recomputes `enrolled_count`). **Reason required** and audited.

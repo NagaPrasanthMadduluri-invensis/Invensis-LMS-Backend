@@ -92,6 +92,12 @@ router.post(
   requireRole("admin"),
   asyncHandler(ctrl.resendParticipantSetupEmail)
 );
+router.patch(
+  "/participants/:participantId/role",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.changeParticipantRole)
+);
 
 router.patch(
   "/enrolments/:enrolmentId/cancel",

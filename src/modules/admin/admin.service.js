@@ -1510,6 +1510,7 @@ export async function getParticipantDetail(participantId) {
       accountActive: users.isActive,
       hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
       lastLoginAt: users.lastLoginAt,
+      role: users.role,
       companyName: userProfiles.companyName,
       department: userProfiles.department,
       yearsExperience: userProfiles.yearsExperience,
@@ -1597,6 +1598,10 @@ export async function getParticipantDetail(participantId) {
       account_active: p.accountActive ?? false,
       has_password: p.hasPassword ?? false,
       last_login_at: p.lastLoginAt ?? null,
+      // The linked account's landing role, so the admin can switch a learner to
+      // sponsor. `user_id` is the switch target; null when there's no account.
+      user_id: p.userId ?? null,
+      role: p.role ?? null,
       created_at: p.createdAt,
     },
     enrolments: enrolled,
@@ -3012,6 +3017,54 @@ export async function getTrainingAttendance(trainingRef) {
       };
     }),
   };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Role switch (learner → sponsor)
+   ─────────────────────────────────────────────────────────
+   `role` is only the default landing portal — actual access stays
+   capability-derived (lib/capabilities.js), so this changes where the account
+   lands, not what data it can reach. Bumps token_version so the change takes
+   effect immediately (the cached access token + role cookie are invalidated,
+   forcing a re-login). Restricted to learner/sponsor accounts; admin/trainer
+   are never touched here, and an admin can't change their own role. */
+export async function changeParticipantRole(adminId, participantId, { role }, ip) {
+  const [p] = await db
+    .select({ userId: participants.userId })
+    .from(participants)
+    .where(eq(participants.id, participantId))
+    .limit(1);
+  if (!p) throw new AppError("Participant not found", 404);
+  if (!p.userId) throw new AppError("This learner has no portal account to switch", 409);
+  if (p.userId === adminId) throw new AppError("You can't change your own role", 409);
+
+  const [user] = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(eq(users.id, p.userId))
+    .limit(1);
+  if (!user) throw new AppError("Account not found", 404);
+  if (!["learner", "sponsor"].includes(user.role)) {
+    throw new AppError(`Only learner or sponsor accounts can be switched here (this one is ${user.role}).`, 409);
+  }
+  if (user.role === role) return { role: user.role, changed: false };
+
+  await db
+    .update(users)
+    .set({ role, tokenVersion: sql`${users.tokenVersion} + 1`, updatedAt: new Date() })
+    .where(eq(users.id, user.id));
+
+  await writeAudit(db, {
+    entityType: "user",
+    entityId: user.id,
+    action: "role_changed",
+    actorId: adminId,
+    before: { role: user.role },
+    after: { role },
+    ipAddress: ip,
+  });
+
+  return { role, changed: true };
 }
 
 /* ─────────────────────────────────────────────────────────

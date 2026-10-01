@@ -13,6 +13,7 @@ import {
   rescheduleTrainingSchema,
   composeEmailSchema,
   trainerEmailSchema,
+  changeRoleSchema,
 } from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
 
@@ -207,4 +208,10 @@ export async function sendParticipantEmail(req, res) {
 export async function sendTrainerEmail(req, res) {
   const body = trainerEmailSchema.parse(req.body);
   res.json(await adminService.sendTrainerEmail(req.user.user_id, req.params.trainerId, body, req.ip));
+}
+
+/* ── Role switch (learner → sponsor) ── */
+export async function changeParticipantRole(req, res) {
+  const body = changeRoleSchema.parse(req.body);
+  res.json(await adminService.changeParticipantRole(req.user.user_id, req.params.participantId, body, req.ip));
 }
