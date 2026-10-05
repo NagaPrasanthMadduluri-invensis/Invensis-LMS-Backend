@@ -46,6 +46,8 @@ const schema = z.object({
   // SMTP (Nodemailer). If SMTP_HOST is unset the mailer falls back to logging
   // the email to the console — dev/CI works without real credentials.
   MAIL_FROM: z.string().default("Invensis Learning Portal <no-reply@invensis.net>"),
+  // Where admin-facing support-ticket notifications are sent (new ticket, customer reply).
+  SUPPORT_EMAIL: z.string().default("operations@invensislearning.com"),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   SMTP_USER: z.string().optional(),

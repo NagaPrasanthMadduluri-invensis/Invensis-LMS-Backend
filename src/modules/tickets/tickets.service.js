@@ -3,7 +3,17 @@ import { db } from "../../config/db.js";
 import { tickets, ticketMessages, participants, trainingIds, enrolments, users } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
+import { env } from "../../config/env.js";
+import {
+  sendTicketRaisedEmail, sendTicketAdminReplyEmail, sendTicketCustomerReplyEmail,
+} from "../../lib/mailer.js";
 import { CATEGORY_PRIORITY, TRAINING_CATEGORIES } from "./tickets.schema.js";
+
+// Ticket notifications are best-effort: a mail failure must never fail or roll
+// back the ticket action. Always awaited AFTER the DB work, and swallowed.
+async function notify(fn, label) {
+  try { await fn(); } catch (e) { console.error(`[tickets] ${label} email failed: ${e.message}`); }
+}
 
 // The login identity → participant (learner) profile. Tickets are scoped to the
 // participant, so every learner-facing operation resolves this first.
@@ -97,7 +107,7 @@ function summarize(rows) {
 /* ── Learner ──────────────────────────────────────────────── */
 
 export async function createTicket(userId, body, ip) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const participant = await resolveParticipant(tx, userId);
     const { category, subject, description } = body;
     const priority = CATEGORY_PRIORITY[category] || "low";
@@ -149,8 +159,28 @@ export async function createTicket(userId, body, ip) {
       .leftJoin(trainingIds, eq(tickets.trainingId, trainingIds.id))
       .where(eq(tickets.id, created.id))
       .limit(1);
-    return { ticket: ticketDto(row) };
+    return {
+      ticket: ticketDto(row),
+      created,
+      raiser: { name: participant.name, email: participant.email },
+      trainingTitle: row.trainingTitle ?? null,
+    };
   });
+
+  // Notify the support inbox that a ticket was raised.
+  await notify(() => sendTicketRaisedEmail({
+    to: env.SUPPORT_EMAIL,
+    code: result.created.code,
+    subject: result.created.subject,
+    category: result.created.category,
+    priority: result.created.priority,
+    description: result.created.description,
+    raiserName: result.raiser.name,
+    raiserEmail: result.raiser.email,
+    trainingTitle: result.trainingTitle,
+  }), "ticket-raised");
+
+  return { ticket: result.ticket };
 }
 
 export async function listLearnerTickets(userId) {
@@ -200,6 +230,17 @@ export async function addLearnerMessage(userId, ticketId, body, ip) {
       ipAddress: ip,
     });
   });
+
+  // Notify the support inbox that the customer replied.
+  await notify(() => sendTicketCustomerReplyEmail({
+    to: env.SUPPORT_EMAIL,
+    code: t.code,
+    subject: t.subject,
+    message: body,
+    learnerName: participant.name,
+    learnerEmail: participant.email,
+  }), "ticket-customer-reply");
+
   return getLearnerTicket(userId, ticketId);
 }
 
@@ -281,7 +322,19 @@ export async function addAdminMessage(adminId, ticketId, body, ip) {
       ipAddress: ip,
     });
   });
-  return getAdminTicket(ticketId);
+
+  const result = await getAdminTicket(ticketId);
+  // Notify the customer that the team replied.
+  if (result.ticket?.learner?.email) {
+    await notify(() => sendTicketAdminReplyEmail({
+      to: result.ticket.learner.email,
+      code: result.ticket.code,
+      subject: result.ticket.subject,
+      message: body,
+      learnerName: result.ticket.learner.name,
+    }), "ticket-admin-reply");
+  }
+  return result;
 }
 
 export async function updateTicketStatus(adminId, id, body, ip) {

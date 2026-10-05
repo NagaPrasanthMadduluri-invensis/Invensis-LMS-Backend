@@ -336,3 +336,70 @@ export async function sendPasswordResetEmail(user, link) {
   });
   await sendMail({ to: user.email, subject, text, html });
 }
+
+/* ── Support-ticket notifications ─────────────────────────────────
+   Sent from the operations mailbox so replies reach support. User-entered
+   content (subject, description, message) is HTML-escaped. */
+const SUPPORT_FROM = "Invensis Learning Support <operations@invensislearning.com>";
+const nl2br = (s = "") => escapeHtml(s).replace(/\n/g, "<br>");
+
+/** New ticket → the admin support inbox. */
+export async function sendTicketRaisedEmail(ctx) {
+  const url = `${env.FRONTEND_URL}/admin/tickets`;
+  const contentHtml =
+    cohortHead("Support ticket", `New ticket ${escapeHtml(ctx.code)}`) +
+    cohortPara(`<b>${escapeHtml(ctx.subject)}</b>`) +
+    cohortTable("Details", [
+      ["Raised by", `${escapeHtml(ctx.raiserName || "—")} (${escapeHtml(ctx.raiserEmail || "—")})`],
+      ["Category", escapeHtml(ctx.category || "—")],
+      ["Priority", escapeHtml(ctx.priority || "—")],
+      ...(ctx.trainingTitle ? [["Training", escapeHtml(ctx.trainingTitle)]] : []),
+    ]) +
+    cohortPara(nl2br(ctx.description)) +
+    cohortButton("Open ticket", url) +
+    cohortSignoff("—", "Invensis Learning Portal");
+  return sendMail({
+    from: SUPPORT_FROM,
+    to: ctx.to,
+    subject: `New support ticket ${ctx.code}: ${ctx.subject}`,
+    text: `${ctx.raiserName} (${ctx.raiserEmail}) raised ${ctx.code}: ${ctx.subject}\n\n${ctx.description}\n\n${url}`,
+    html: renderEmail({ subject: `New support ticket ${ctx.code}`, preheader: escapeHtml(ctx.subject), contentHtml }),
+  });
+}
+
+/** Admin replied → the customer who raised the ticket. */
+export async function sendTicketAdminReplyEmail(ctx) {
+  const url = `${env.FRONTEND_URL}/tickets`;
+  const contentHtml =
+    cohortHead("Support ticket", `New reply on ${escapeHtml(ctx.code)}`) +
+    cohortPara(`Hi ${escapeHtml(firstNameOf(ctx.learnerName))},`) +
+    cohortPara(`Our team has replied to your ticket <b>${escapeHtml(ctx.subject)}</b>:`) +
+    cohortNote(nl2br(ctx.message)) +
+    cohortButton("View &amp; reply", url) +
+    cohortSignoff("Warm regards,", "The Invensis Learning Team");
+  return sendMail({
+    from: SUPPORT_FROM,
+    to: ctx.to,
+    subject: `Re: ${ctx.subject} [${ctx.code}]`,
+    text: `Our team replied to your ticket ${ctx.code}:\n\n${ctx.message}\n\nView & reply: ${url}`,
+    html: renderEmail({ subject: `New reply on ${ctx.code}`, preheader: "Our team has replied to your support ticket.", contentHtml }),
+  });
+}
+
+/** Customer replied → the admin support inbox. */
+export async function sendTicketCustomerReplyEmail(ctx) {
+  const url = `${env.FRONTEND_URL}/admin/tickets`;
+  const contentHtml =
+    cohortHead("Support ticket", `New customer reply on ${escapeHtml(ctx.code)}`) +
+    cohortPara(`<b>${escapeHtml(ctx.learnerName || "—")}</b> (${escapeHtml(ctx.learnerEmail || "—")}) replied to <b>${escapeHtml(ctx.subject)}</b>:`) +
+    cohortNote(nl2br(ctx.message)) +
+    cohortButton("Open ticket", url) +
+    cohortSignoff("—", "Invensis Learning Portal");
+  return sendMail({
+    from: SUPPORT_FROM,
+    to: ctx.to,
+    subject: `New reply on ${ctx.code}: ${ctx.subject}`,
+    text: `${ctx.learnerName} (${ctx.learnerEmail}) replied to ${ctx.code}:\n\n${ctx.message}\n\n${url}`,
+    html: renderEmail({ subject: `New customer reply on ${ctx.code}`, preheader: escapeHtml(ctx.subject), contentHtml }),
+  });
+}
