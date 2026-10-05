@@ -34,6 +34,8 @@ export async function listSponsoredLearners(sponsorUserId) {
   const rows = await db
     .select({
       id: enrolments.id,
+      participantId: participants.id,
+      trainingId: trainingIds.id,
       name: participants.name,
       email: participants.email,
       trainingCode: trainingIds.code,
@@ -56,6 +58,8 @@ export async function listSponsoredLearners(sponsorUserId) {
   return {
     learners: rows.map((r) => ({
       id: r.id,
+      participant_id: r.participantId,
+      training_id: r.trainingId,
       name: r.name,
       email: r.email,
       training_code: r.trainingCode,

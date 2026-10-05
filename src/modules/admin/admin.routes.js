@@ -104,6 +104,12 @@ router.get(
   requireRole("admin"),
   asyncHandler(ctrl.participantEmailTimeline)
 );
+router.get(
+  "/sponsors/:userId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.getSponsorDetail)
+);
 
 router.patch(
   "/enrolments/:enrolmentId/cancel",

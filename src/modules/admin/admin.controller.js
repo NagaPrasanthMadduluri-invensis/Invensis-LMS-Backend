@@ -224,3 +224,8 @@ export async function participantEmailTimeline(req, res) {
 export async function trainerEmailTimeline(req, res) {
   res.json(await adminService.getTrainerEmailTimeline(req.params.trainerId));
 }
+
+/* ── Sponsor detail ── */
+export async function getSponsorDetail(req, res) {
+  res.json(await adminService.getSponsorDetail(req.params.userId));
+}

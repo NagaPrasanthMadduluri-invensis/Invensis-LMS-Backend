@@ -25,6 +25,7 @@ import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
 import { sendComposedEmail } from "../../lib/mailer.js";
 import { fetchMailboxFor } from "../../lib/gmail-imap.js";
+import { getDashboard as getSponsorDashboard, listSponsoredLearners } from "../sponsor/sponsor.service.js";
 import {
   notifyJoinLinkReleased,
   notifyTrainerAssigned,
@@ -1371,7 +1372,7 @@ export async function listParticipants({ search, page, limit, location, job_titl
          between requests. No participant currently has two distinct sponsors,
          but nothing prevents it. */
       sponsor: sql`(
-        SELECT json_build_object('name', su.name, 'email', su.email)
+        SELECT json_build_object('id', su.id, 'name', su.name, 'email', su.email)
           FROM enrolments e
           JOIN orders o ON o.id = e.order_id
           JOIN users su ON su.id = o.sponsor_user_id
@@ -1454,6 +1455,7 @@ export async function listParticipants({ search, page, limit, location, job_titl
       last_login_at: r.lastLoginAt ?? null,
       sponsor_name: r.sponsor?.name ?? null,
       sponsor_email: r.sponsor?.email ?? null,
+      sponsor_user_id: r.sponsor?.id ?? null,
       agent: r.agent ?? null,
       created_at: r.createdAt,
     })),
@@ -3266,4 +3268,48 @@ export async function getTrainerEmailTimeline(trainerId) {
     .limit(1);
   if (!t) throw new AppError("Trainer not found", 404);
   return { email: t.email, messages: await fetchMailboxFor(t.email) };
+}
+
+/* ─────────────────────────────────────────────────────────
+   Sponsor detail (admin view of a buyer)
+   ─────────────────────────────────────────────────────────
+   A sponsor is a user who bought ≥1 order (orders.sponsor_user_id). This gives
+   the admin a per-sponsor page: profile + the learners/seats they funded. */
+export async function getSponsorDetail(userId) {
+  const [u] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      isActive: users.isActive,
+      createdAt: users.createdAt,
+      lastLoginAt: users.lastLoginAt,
+      companyName: userProfiles.companyName,
+    })
+    .from(users)
+    .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!u) throw new AppError("Sponsor not found", 404);
+
+  const [{ learners }, summary] = await Promise.all([
+    listSponsoredLearners(userId),
+    getSponsorDashboard(userId),
+  ]);
+
+  return {
+    sponsor: {
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      account_active: u.isActive ?? false,
+      company_name: u.companyName ?? null,
+      created_at: u.createdAt,
+      last_login_at: u.lastLoginAt,
+    },
+    summary,
+    learners,
+  };
 }

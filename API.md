@@ -823,6 +823,15 @@ A **live, read-only** view of the `operations@invensislearning.com` mailbox for 
 - **Errors:** `404` person not found · **`503`** the operations mailbox isn't configured (no `GMAIL_IMAP_*` env) — the tab shows a "not set up" state · **`502`** the mailbox couldn't be reached/read · `403` not an admin
 - **Config (`.env`, servers only):** `GMAIL_IMAP_USER`, `GMAIL_IMAP_APP_PASSWORD` (+ optional `GMAIL_IMAP_HOST` default `imap.gmail.com`, `GMAIL_IMAP_PORT` 993). Needs IMAP enabled + 2-step verification + an app password on the account.
 
+### 3.2.8c `GET /api/admin/sponsors/:userId`
+
+The admin view of a sponsor (a buyer — `orders.sponsor_user_id`). `:userId` is the sponsor's **user id** (e.g. `sponsor_user_id` from the participant list).
+
+- **Auth:** Bearer access token · role `admin`
+- **`200` response:** `{ "sponsor": { "id","name","email","role","company_name","account_active","created_at","last_login_at" }, "summary": { "learners_count","active_count","invoices_count","outstanding_amount","currency_code" }, "learners": [ { "id","participant_id","training_id","name","email","training_code","training_title","start_date","end_date","status" } ] }`
+- The participant list (`GET /api/admin/participants`) now also returns **`sponsor_user_id`** per row, to build the link to this view.
+- **Errors:** `404` sponsor/user not found · `403` not an admin
+
 ### 3.2.9 `PATCH /api/admin/enrolments/:enrolmentId/cancel`
 
 Cancel an enrolment (frees the seat, recomputes `enrolled_count`). **Reason required** and audited.
