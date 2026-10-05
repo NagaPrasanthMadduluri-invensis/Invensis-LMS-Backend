@@ -7,7 +7,7 @@ import { env } from "../../config/env.js";
 import {
   sendTicketRaisedEmail, sendTicketAdminReplyEmail, sendTicketCustomerReplyEmail,
 } from "../../lib/mailer.js";
-import { CATEGORY_PRIORITY, TRAINING_CATEGORIES } from "./tickets.schema.js";
+import { CATEGORY_PRIORITY } from "./tickets.schema.js";
 
 // Ticket notifications are best-effort: a mail failure must never fail or roll
 // back the ticket action. Always awaited AFTER the DB work, and swallowed.
@@ -112,9 +112,12 @@ export async function createTicket(userId, body, ip) {
     const { category, subject, description } = body;
     const priority = CATEGORY_PRIORITY[category] || "low";
 
+    // A training can be attached to ANY category — the query is ultimately about
+    // a training. It's required for the training categories (enforced by the
+    // schema) and optional otherwise; whenever one is given it must be the
+    // learner's own enrolment.
     let trainingId = null;
-    if (TRAINING_CATEGORIES.has(category)) {
-      // The referenced training must be one the learner is actually enrolled in.
+    if (body.training_id) {
       const [enr] = await tx
         .select({ trainingId: enrolments.trainingId })
         .from(enrolments)
