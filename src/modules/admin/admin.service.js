@@ -603,6 +603,7 @@ export async function listTrainings() {
       externalEventCode: schedules.externalEventCode,
       externalEventId: schedules.externalEventId,
       trainerName: users.name,
+      trainerId: trainers.id,
     })
     .from(trainingIds)
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
@@ -1809,6 +1810,7 @@ function dashboardTrainingCard(r) {
     location: r.location ?? null,
     trainer_assigned: r.trainerName != null,
     trainer_name: r.trainerName ?? null,
+    trainer_id: r.trainerId ?? null,
   };
 }
 
@@ -1940,6 +1942,8 @@ export async function getDashboard() {
     db
       .select({
         enrolmentId: enrolments.id,
+        participantId: participants.id,
+        trainingId: trainingIds.id,
         status: enrolments.status,
         enrolledAt: enrolments.enrolledAt,
         participantName: participants.name,
@@ -1951,6 +1955,11 @@ export async function getDashboard() {
            resolve to null: the learner paying for themselves is not a sponsor. */
         sponsorName: sql`(
           SELECT su.name FROM users su
+           WHERE su.id = ${orders.sponsorUserId}
+             AND su.id IS DISTINCT FROM ${participants.userId}
+        )`,
+        sponsorUserId: sql`(
+          SELECT su.id FROM users su
            WHERE su.id = ${orders.sponsorUserId}
              AND su.id IS DISTINCT FROM ${participants.userId}
         )`,
@@ -2158,6 +2167,9 @@ export async function getDashboard() {
     completed_trainings: completedRows.map(dashboardTrainingCard),
     recent_enrolments: recentEnrolments.map((e) => ({
       enrolment_id: e.enrolmentId,
+      participant_id: e.participantId ?? null,
+      training_id: e.trainingId ?? null,
+      sponsor_user_id: e.sponsorUserId ?? null,
       status: e.status,
       enrolled_at: e.enrolledAt,
       participant_name: e.participantName,
