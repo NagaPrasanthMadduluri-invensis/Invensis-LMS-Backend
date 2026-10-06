@@ -624,6 +624,17 @@ export async function listTrainings() {
       externalEventId: schedules.externalEventId,
       trainerName: users.name,
       trainerId: trainers.id,
+      // Learners on this training whose account still isn't set up (active user
+      // row, no password yet) — surfaced as a per-card "setup pending" count.
+      setupPendingCount: sql`(
+        SELECT count(*)::int FROM enrolments en
+          JOIN participants pp ON pp.id = en.participant_id
+          JOIN users uu ON uu.id = pp.user_id
+         WHERE en.training_id = ${trainingIds.id}
+           AND en.status NOT IN ('cancelled', 'transferred')
+           AND uu.is_active IS TRUE
+           AND uu.password_hash IS NULL
+      )`,
     })
     .from(trainingIds)
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
@@ -674,6 +685,7 @@ export async function listTrainings() {
       meeting_released: r.meetingReleased,
       trainer_assigned: r.trainerName != null,
       trainer_name: r.trainerName ?? null,
+      setup_pending_count: r.setupPendingCount ?? 0,
     })),
   };
 }
@@ -736,9 +748,12 @@ export async function getTrainingDetail(trainingRef) {
       jobTitle: participants.jobTitle,
       city: participants.city,
       country: participants.country,
+      accountActive: users.isActive,
+      hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
+    .leftJoin(users, eq(participants.userId, users.id))
     .where(eq(enrolments.trainingId, training.id))
     .orderBy(desc(enrolments.enrolledAt));
 
@@ -816,6 +831,10 @@ export async function getTrainingDetail(trainingRef) {
       status: e.status,
       enrolled_at: e.enrolledAt,
       added_manually: e.orderId == null,
+      // Account registration state (admin wants to see who hasn't set up yet).
+      account_active: e.accountActive ?? false,
+      has_password: e.hasPassword ?? false,
+      setup_pending: (e.accountActive ?? false) && !(e.hasPassword ?? false),
     })),
     sessions: sessions.map((s) => ({
       id: s.id,
@@ -1350,7 +1369,7 @@ async function refreshEnrolledCount(tx, trainingId) {
 // List all participants for the admin dashboard, paginated + optional search
 // (by name or email). Enriched with confirmed-enrolment count and account
 // status (has_password = false means their setup email is still pending).
-export async function listParticipants({ search, page, limit, location, job_title }) {
+export async function listParticipants({ search, page, limit, location, job_title, status, joined_from, joined_to }) {
   const offset = (page - 1) * limit;
 
   // "city, country" — skips NULL parts, empty → NULL. Mirrors the display join.
@@ -1364,6 +1383,15 @@ export async function listParticipants({ search, page, limit, location, job_titl
   }
   if (job_title) conditions.push(eq(participants.jobTitle, job_title));
   if (location) conditions.push(eq(locationExpr, location));
+  // Account status. 'setup_pending' mirrors the UI's (account_active && !has_password).
+  if (status === "active") conditions.push(sql`${users.isActive} IS TRUE`);
+  else if (status === "inactive") conditions.push(sql`${users.isActive} IS NOT TRUE`);
+  else if (status === "setup_pending") {
+    conditions.push(sql`${users.isActive} IS TRUE AND ${users.passwordHash} IS NULL`);
+  }
+  // Joined (account-creation) date range — inclusive of both ends.
+  if (joined_from) conditions.push(sql`${participants.createdAt} >= ${joined_from}::date`);
+  if (joined_to) conditions.push(sql`${participants.createdAt} < (${joined_to}::date + 1)`);
   const where = conditions.length ? and(...conditions) : undefined;
 
   const enrolmentCount = sql`(
@@ -1440,6 +1468,7 @@ export async function listParticipants({ search, page, limit, location, job_titl
     .select({
       count: sql`count(*)::int`,
       active: sql`count(*) FILTER (WHERE ${users.isActive} IS TRUE)::int`,
+      setupPending: sql`count(*) FILTER (WHERE ${users.isActive} IS TRUE AND ${users.passwordHash} IS NULL)::int`,
       enrolments: sql`COALESCE(SUM(${enrolmentCount}), 0)::int`,
     })
     .from(participants)
@@ -1488,6 +1517,7 @@ export async function listParticipants({ search, page, limit, location, job_titl
       total: count,
       active: agg?.active ?? 0,
       inactive: count - (agg?.active ?? 0),
+      setup_pending: agg?.setupPending ?? 0,
       total_enrolments: agg?.enrolments ?? 0,
     },
     filters: {

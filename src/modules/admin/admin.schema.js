@@ -125,6 +125,12 @@ export const listParticipantsQuerySchema = z.object({
   search: z.string().trim().min(1).optional(),
   location: z.string().trim().min(1).optional(),
   job_title: z.string().trim().min(1).optional(),
+  // Account status: active / inactive (users.is_active), or setup_pending
+  // (active account that hasn't set a password yet).
+  status: z.enum(["active", "inactive", "setup_pending"]).optional(),
+  // Account-creation (joined) date range, inclusive, as YYYY-MM-DD.
+  joined_from: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  joined_to: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),
 });
