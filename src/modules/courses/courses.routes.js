@@ -44,6 +44,12 @@ router.post(
 /* ─────────────────────────────────────────────────────────
    Admin — shared resource ops (by resource id)
    ───────────────────────────────────────────────────────── */
+// Bulk-import supplementary link resources across trainings (CSV). Declared
+// before "/resources/:resourceId" so "bulk" isn't read as a resource id.
+router.post(
+  "/resources/bulk",
+  verifyToken, requireRole("admin"), asyncHandler(ctrl.bulkImportResources)
+);
 router.patch(
   "/resources/:resourceId",
   verifyToken, requireRole("admin"), asyncHandler(ctrl.updateResource)

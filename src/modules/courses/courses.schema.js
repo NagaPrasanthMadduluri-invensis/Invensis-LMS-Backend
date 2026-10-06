@@ -72,3 +72,22 @@ export const updateCourseSchema = z
     is_active: z.boolean().optional(),
   })
   .refine((b) => Object.keys(b).length > 0, { message: "No fields to update" });
+
+// Bulk import of supplementary (link) resources across trainings, from a CSV.
+// Each row names its training by code; files aren't importable this way.
+// Fields are lenient on purpose — each row is validated in the service so one
+// malformed row is reported, not fatal to the whole import (partial success).
+export const bulkImportResourcesSchema = z.object({
+  resources: z
+    .array(
+      z.object({
+        training_code: z.string().trim().max(64).optional(),
+        title: z.string().trim().max(255).optional(),
+        url: z.string().trim().max(2048).optional(),
+        description: z.string().trim().max(2000).optional().nullable(),
+        is_active: z.boolean().optional(),
+      })
+    )
+    .min(1)
+    .max(500),
+});

@@ -4,6 +4,7 @@ import {
   updateResourceSchema,
   createCourseSchema,
   updateCourseSchema,
+  bulkImportResourcesSchema,
 } from "./courses.schema.js";
 import * as courseService from "./courses.service.js";
 
@@ -89,4 +90,10 @@ export async function myTrainingResources(req, res) {
     userId: req.user.user_id,
     requireEnrolment: role === "learner" || role === "sponsor",
   }));
+}
+
+/* ── Bulk import supplementary resources (CSV) ── */
+export async function bulkImportResources(req, res) {
+  const body = bulkImportResourcesSchema.parse(req.body);
+  res.json(await courseService.bulkImportSupplementaryResources(body, req.user.user_id, req.ip));
 }

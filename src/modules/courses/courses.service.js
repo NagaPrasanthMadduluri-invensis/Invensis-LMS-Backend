@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   courses,
@@ -549,4 +549,65 @@ export async function listResourcesForTraining(trainingRef, { userId, requireEnr
     predefined: await shapeMany(predefined),
     supplementary: await shapeMany(supp),
   };
+}
+
+/**
+ * Bulk-import supplementary LINK resources across trainings from a parsed CSV.
+ * Each row names its training by code. Partial success: valid rows are created,
+ * invalid rows (unknown training code) are reported. Files aren't importable
+ * this way — every imported resource is an external link.
+ */
+export async function bulkImportSupplementaryResources({ resources }, userId, ip) {
+  // Resolve all referenced training codes in one query.
+  const codes = [...new Set(resources.map((r) => r.training_code))];
+  const trainings = await db
+    .select({ id: trainingIds.id, code: trainingIds.code })
+    .from(trainingIds)
+    .where(inArray(trainingIds.code, codes));
+  const idByCode = new Map(trainings.map((t) => [t.code, t.id]));
+
+  const validUrl = (u) => {
+    try { const p = new URL(String(u)); return p.protocol === "http:" || p.protocol === "https:"; }
+    catch { return false; }
+  };
+
+  const failed = [];
+  const toInsert = [];
+  resources.forEach((r, i) => {
+    const fail = (error) => failed.push({ row: i + 1, training_code: r.training_code ?? null, title: r.title ?? null, error });
+    const title = (r.title ?? "").trim();
+    if (!r.training_code) return fail("Missing training code");
+    const trainingId = idByCode.get(r.training_code);
+    if (!trainingId) return fail("Unknown training code");
+    if (!title) return fail("Title is required");
+    if (!validUrl(r.url)) return fail("Invalid or missing URL");
+    toInsert.push({
+      courseId: null,
+      trainingId,
+      kind: "supplementary",
+      title,
+      description: r.description ?? null,
+      resourceType: "link",
+      externalUrl: String(r.url).trim(),
+      isActive: r.is_active ?? true,
+      uploadedBy: userId,
+    });
+  });
+
+  let created = 0;
+  if (toInsert.length) {
+    const inserted = await db.insert(courseResources).values(toInsert).returning({ id: courseResources.id });
+    created = inserted.length;
+  }
+
+  await writeAudit(db, {
+    entityType: "course_resource",
+    entityId: randomUUID(),
+    action: "resources_bulk_import",
+    actorId: userId,
+    after: { requested: resources.length, created, failed: failed.length },
+    ipAddress: ip,
+  });
+
+  return { created, failed };
 }
