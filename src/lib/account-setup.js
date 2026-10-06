@@ -13,7 +13,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../config/db.js";
 import { env } from "../config/env.js";
 import { passwordSetupTokens } from "../db/schema.js";
-import { sendAccountSetupEmail, sendPasswordResetEmail } from "./mailer.js";
+import { sendAccountSetupEmail, sendPasswordResetEmail, sendAccountSetupReminderEmail } from "./mailer.js";
 
 const hashToken = (raw) => crypto.createHash("sha256").update(raw).digest("hex");
 
@@ -63,6 +63,18 @@ export async function sendAccountSetupLink(user, purpose = "setup") {
   const link = buildLink(raw, purpose);
   if (purpose === "reset") await sendPasswordResetEmail(user, link);
   else await sendAccountSetupEmail(user, link);
+  return { expiresAt };
+}
+
+/**
+ * Issue a fresh setup token and email a *reminder* that points at an upcoming
+ * training, throwing on failure so a batch caller can count successes. `user` =
+ * { id, name, email }; `context` = { trainingTitle, startDate }.
+ */
+export async function sendAccountSetupReminder(user, context = {}) {
+  const { raw, expiresAt } = await createSetupToken(db, user.id, "setup");
+  const link = buildLink(raw, "setup");
+  await sendAccountSetupReminderEmail(user, link, context);
   return { expiresAt };
 }
 

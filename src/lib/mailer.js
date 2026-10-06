@@ -316,6 +316,32 @@ export async function sendAccountSetupEmail(user, link) {
   await sendMail({ to: user.email, subject, text, html });
 }
 
+export async function sendAccountSetupReminderEmail(user, link, { trainingTitle, startDate } = {}) {
+  const subject = "Reminder: set up your account before your training";
+  const when = startDate ? ` on ${startDate}` : " soon";
+  const course = trainingTitle ? ` for “${trainingTitle}”` : "";
+  const text =
+    `Hi ${user.name},\n\n` +
+    `Your training${course} starts${when}, and your Invensis Learning Portal ` +
+    `account isn't set up yet. Set your password to activate it and access your ` +
+    `joining details (link valid ${env.SETUP_TOKEN_TTL_HOURS} hours):\n\n` +
+    `${link}\n\n` +
+    `If you've already set up your account, you can ignore this email.`;
+  const html = emailShell({
+    subject,
+    preheader: "Set your password before your training starts.",
+    eyebrow: "Account Setup Reminder",
+    heading: "Set up your account before your training",
+    greeting: `Hi ${user.name},`,
+    body:
+      `Your training${course} starts${when}, but your account isn't active yet. ` +
+      `Set your password below to activate it and access your joining details.`,
+    buttonLabel: "Set Your Password",
+    link,
+  });
+  await sendMail({ to: user.email, subject, text, html });
+}
+
 export async function sendPasswordResetEmail(user, link) {
   const subject = "Reset your Invensis Learning Portal password";
   const text =
