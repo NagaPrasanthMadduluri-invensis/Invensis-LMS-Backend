@@ -263,6 +263,26 @@ export async function setTrainingStatus(adminId, trainingRef, { status, note, fo
       }
     }
 
+    // Completion is the authoritative moment for each learner's overall
+    // attendance. Recompute it from the per-session records so any value that
+    // drifted earlier (e.g. two concurrent session marks that each rolled up
+    // without seeing the other's record and settled on "partial") is corrected
+    // before the training freezes and certificates are issued.
+    if (status === "completed") {
+      const active = await tx
+        .select({ participantId: enrolments.participantId })
+        .from(enrolments)
+        .where(
+          and(
+            eq(enrolments.trainingId, training.id),
+            notInArray(enrolments.status, ["cancelled", "transferred"])
+          )
+        );
+      for (const { participantId } of active) {
+        await recomputeEnrolmentAttendance(tx, training.id, participantId);
+      }
+    }
+
     const now = new Date();
     await tx
       .update(trainingIds)

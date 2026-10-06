@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
   trainingIds,
@@ -407,6 +407,14 @@ export async function markSessionAttendance(userId, sessionId, records, ip) {
     if (!session) throw new AppError("Session not found", 404);
     await assertAssigned(tx, userId, session.trainingId);
     assertAttendanceOpen(await loadTrainingForSession(tx, session.trainingId));
+
+    // Serialize all attendance marking for this training. Each mark recomputes
+    // the enrolment rollup from every session's records; two concurrent marks of
+    // different sessions (e.g. a "save all" firing day 1 and day 2 in parallel)
+    // would otherwise each recompute without seeing the other's uncommitted
+    // record and both settle on "partial". A per-training transaction-scoped
+    // advisory lock makes the later mark wait, so its recompute sees the full set.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${session.trainingId}))`);
 
     const enrolled = await tx
       .select({ participantId: enrolments.participantId })
