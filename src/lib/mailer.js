@@ -6,7 +6,10 @@
  * without credentials. Call sites don't change either way.
  */
 import nodemailer from "nodemailer";
+import { sql } from "drizzle-orm";
 import { env } from "../config/env.js";
+import { db } from "../config/db.js";
+import { users } from "../db/schema.js";
 
 // Blind-copied on every outgoing email for oversight.
 const MAIL_BCC = "operations@invensislearning.com";
@@ -37,8 +40,28 @@ function getTransporter() {
   return transporter;
 }
 
+// If `to` is a user's login email and they've set a communication email, every
+// message to them is redirected there. Centralised here so ALL senders honour it
+// without each call site having to know. Never throws — a lookup failure just
+// leaves the original address in place. The CC (e.g. a sponsor) is left alone.
+async function resolveDeliveryTo(to) {
+  if (!to || typeof to !== "string") return to;
+  try {
+    const [u] = await db
+      .select({ comm: users.communicationEmail })
+      .from(users)
+      .where(sql`lower(${users.email}) = lower(${to})`)
+      .limit(1);
+    const comm = u?.comm?.trim();
+    return comm ? comm : to;
+  } catch {
+    return to;
+  }
+}
+
 async function sendMail({ from, to, cc, subject, text, html }) {
-  const msg = { from: from ?? env.MAIL_FROM, to, bcc: MAIL_BCC, subject, text, html };
+  const deliverTo = await resolveDeliveryTo(to);
+  const msg = { from: from ?? env.MAIL_FROM, to: deliverTo, bcc: MAIL_BCC, subject, text, html };
   if (cc) msg.cc = cc; // optional CC (e.g. a learner's sponsor on info emails)
   await getTransporter().sendMail(msg);
   return msg;

@@ -55,7 +55,7 @@ async function loadProfileRow(runner, userId) {
 
 export async function getProfile(userId) {
   const [user] = await db
-    .select({ id: users.id, name: users.name, email: users.email, role: users.role, isActive: users.isActive })
+    .select({ id: users.id, name: users.name, email: users.email, communicationEmail: users.communicationEmail, role: users.role, isActive: users.isActive })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
@@ -66,7 +66,7 @@ export async function getProfile(userId) {
   const avatarUrl = avatarKey ? await presignGet(avatarKey) : null;
 
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, is_active: user.isActive },
+    user: { id: user.id, name: user.name, email: user.email, communication_email: user.communicationEmail ?? null, role: user.role, is_active: user.isActive },
     profile: { ...publicProfile(profile), avatar_url: avatarUrl },
   };
 }
@@ -94,6 +94,11 @@ export async function updateProfile(userId, body) {
 
     const userSet = { updatedAt: new Date() };
     if (("first_name" in body || "last_name" in body) && displayName) userSet.name = displayName;
+    // Communication email — empty string clears it (falls back to login email).
+    if ("communication_email" in body) {
+      const v = (body.communication_email ?? "").trim();
+      userSet.communicationEmail = v === "" ? null : v;
+    }
     if (Object.keys(userSet).length > 1) {
       await tx.update(users).set(userSet).where(eq(users.id, userId));
     }

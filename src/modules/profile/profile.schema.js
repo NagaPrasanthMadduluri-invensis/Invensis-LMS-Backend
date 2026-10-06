@@ -4,8 +4,16 @@ import { z } from "zod";
 // Email is NOT here — it's the login identity and not editable.
 const str = (max) => z.string().trim().max(max).nullable().optional();
 
+// Communication email: a valid address, or empty/null to clear (fall back to
+// the login email). Empty string is normalised to null in the service.
+const commEmail = z
+  .union([z.literal(""), z.string().trim().email().max(255)])
+  .nullable()
+  .optional();
+
 export const updateProfileSchema = z
   .object({
+    communication_email: commEmail,
     first_name: str(100),
     last_name: str(100),
     phone: str(30),

@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "communication_email" text;

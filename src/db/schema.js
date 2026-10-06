@@ -44,6 +44,9 @@ export const resourceTypeEnum = pgEnum("resource_type", ["video", "pdf", "zip", 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().default(sql`uuidv7()`),
   email: text("email").notNull().unique(),
+  // Preferred address for all outbound mail. When set, every email to this user
+  // goes here instead of the login `email` (resolved centrally in sendMail).
+  communicationEmail: text("communication_email"),
   name: text("name").notNull(),
   role: roleEnum("role").notNull(),
   passwordHash: text("password_hash"),
