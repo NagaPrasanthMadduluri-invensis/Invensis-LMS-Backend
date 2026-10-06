@@ -617,6 +617,7 @@ export async function listTrainings() {
       startDate: schedules.startDate,
       endDate: schedules.endDate,
       durationHours: schedules.durationHours,
+      hoursPerDay: schedules.hoursPerDay,
       timezone: schedules.timezone,
       // The CMS event code ("INL000055"), shown on the card beside the Training
       // ID so an admin can tie a training back to the schedule in the CMS.
@@ -655,6 +656,10 @@ export async function listTrainings() {
        ahead of every real one. `createdAt` breaks ties so same-day cohorts keep
        a stable, meaningful order. */
     .orderBy(
+      // Upcoming cohorts first (soonest start at the top), then past ones
+      // most-recent first. A training with no start date sorts to the very end.
+      sql`CASE WHEN ${schedules.startDate} >= CURRENT_DATE THEN 0 ELSE 1 END ASC`,
+      sql`CASE WHEN ${schedules.startDate} >= CURRENT_DATE THEN ${schedules.startDate} END ASC NULLS LAST`,
       sql`${schedules.startDate} DESC NULLS LAST`,
       desc(trainingIds.createdAt)
     );
@@ -679,6 +684,7 @@ export async function listTrainings() {
       start_date: r.startDate,
       end_date: r.endDate,
       duration_hours: r.durationHours,
+      hours_per_day: r.hoursPerDay,
       timezone: r.timezone,
       meeting_url: r.meetingUrl,
       meeting_platform: r.meetingPlatform,
