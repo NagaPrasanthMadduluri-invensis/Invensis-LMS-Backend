@@ -757,10 +757,16 @@ export async function getTrainingDetail(trainingRef) {
       country: participants.country,
       accountActive: users.isActive,
       hasPassword: sql`(${users.passwordHash} IS NOT NULL)`,
+      company: userProfiles.companyName,
+      department: userProfiles.department,
+      experience: userProfiles.yearsExperience,
+      agent: orders.agentName,
     })
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .leftJoin(users, eq(participants.userId, users.id))
+    .leftJoin(userProfiles, eq(userProfiles.userId, participants.userId))
+    .leftJoin(orders, eq(orders.id, enrolments.orderId))
     .where(eq(enrolments.trainingId, training.id))
     .orderBy(desc(enrolments.enrolledAt));
 
@@ -842,6 +848,10 @@ export async function getTrainingDetail(trainingRef) {
       account_active: e.accountActive ?? false,
       has_password: e.hasPassword ?? false,
       setup_pending: (e.accountActive ?? false) && !(e.hasPassword ?? false),
+      company: e.company ?? null,
+      department: e.department ?? null,
+      experience_years: e.experience ?? null,
+      agent: e.agent ?? null,
     })),
     sessions: sessions.map((s) => ({
       id: s.id,
