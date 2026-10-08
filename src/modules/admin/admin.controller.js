@@ -14,8 +14,14 @@ import {
   composeEmailSchema,
   trainerEmailSchema,
   changeRoleSchema,
+  bulkImportCorporateSchema,
 } from "./admin.schema.js";
 import * as adminService from "./admin.service.js";
+
+export async function bulkImportCorporate(req, res) {
+  const body = bulkImportCorporateSchema.parse(req.body);
+  res.json(await adminService.bulkImportCorporate(body, req.user.user_id, req.ip));
+}
 
 export async function createSurvey(req, res) {
   const body = createSurveySchema.parse(req.body);

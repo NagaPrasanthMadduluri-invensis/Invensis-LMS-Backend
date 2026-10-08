@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import {
@@ -996,6 +997,200 @@ export async function addParticipant(adminId, trainingRef, body, ip) {
 
   if (provision) await provisionAccountSetup(provision, "setup");
   return result;
+}
+
+/* ── Corporate bulk import (Excel) ─────────────────────────
+   One sheet, one row per person (role = sponsor | learner). Two passes:
+   sponsors first, then learners (so a learner's sponsor_email resolves to a
+   sponsor created in the same sheet). Per-row validation → partial success.
+   `dry_run` runs everything in a transaction and rolls back, returning what
+   WOULD happen so the admin can preview. New accounts get a setup email after
+   commit only when `send_setup_emails` is true. */
+export async function bulkImportCorporate({ rows, dry_run = false, send_setup_emails = true }, adminId, ip) {
+  const result = {
+    sponsors_created: 0, sponsors_updated: 0,
+    learners_created: 0, learners_updated: 0,
+    enrolled: 0, failed: [], warnings: [], dry_run,
+  };
+  const newUsers = []; // {id,name,email} — provisioned after a real commit
+
+  const clean = (v) => { const s = (v ?? "").toString().trim(); return s === "" ? null : s; };
+  const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e ?? "").trim());
+  const splitName = (name) => {
+    const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+    return { first: parts[0] ?? null, last: parts.slice(1).join(" ") || null };
+  };
+
+  async function work(tx) {
+    async function upsertProfile(userId, r) {
+      const { first, last } = splitName(r.name);
+      const set = { updatedAt: new Date() };
+      if (first) set.firstName = first;
+      if (last) set.lastName = last;
+      if (clean(r.phone)) set.phone = clean(r.phone);
+      if (clean(r.city)) set.city = clean(r.city);
+      if (clean(r.country)) set.country = clean(r.country);
+      if (clean(r.company)) set.companyName = clean(r.company);
+      if (clean(r.industry)) set.industry = clean(r.industry);
+      if (clean(r.job_title)) set.jobTitle = clean(r.job_title);
+      const [existing] = await tx.select({ id: userProfiles.id }).from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
+      if (existing) {
+        if (Object.keys(set).length > 1) await tx.update(userProfiles).set(set).where(eq(userProfiles.userId, userId));
+      } else {
+        await tx.insert(userProfiles).values({ userId, ...set });
+      }
+    }
+
+    // Find-or-create a user; fill blank name / communication_email only.
+    async function upsertUser(email, name, commEmail, role) {
+      const [u] = await tx.select({ id: users.id, name: users.name, communicationEmail: users.communicationEmail })
+        .from(users).where(eq(users.email, email)).limit(1);
+      if (!u) {
+        const [created] = await tx.insert(users)
+          .values({ email, name: name || email, role, communicationEmail: commEmail ?? null })
+          .returning({ id: users.id });
+        return { id: created.id, created: true };
+      }
+      const set = { updatedAt: new Date() };
+      if (name && !clean(u.name)) set.name = name;
+      if (commEmail && !u.communicationEmail) set.communicationEmail = commEmail;
+      if (Object.keys(set).length > 1) await tx.update(users).set(set).where(eq(users.id, u.id));
+      return { id: u.id, created: false };
+    }
+
+    const sponsorByEmail = new Map();
+
+    // ── Pass 1: sponsors ──
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if ((r.role ?? "").toString().trim().toLowerCase() !== "sponsor") continue;
+      const email = (r.email ?? "").toString().trim().toLowerCase();
+      if (!validEmail(email)) { result.failed.push({ row: i + 1, role: "sponsor", email: email || null, name: clean(r.name), error: "Invalid or missing email" }); continue; }
+      if (clean(r.communication_email) && !validEmail(r.communication_email)) { result.failed.push({ row: i + 1, role: "sponsor", email, name: clean(r.name), error: "Invalid communication_email" }); continue; }
+      const { id, created } = await upsertUser(email, clean(r.name), clean(r.communication_email), "sponsor");
+      await upsertProfile(id, r);
+      sponsorByEmail.set(email, id);
+      if (created) { result.sponsors_created++; newUsers.push({ id, name: clean(r.name) || email, email }); }
+      else result.sponsors_updated++;
+    }
+
+    // ── Pass 2: learners ──
+    const orderCache = new Map(); // `${sponsorId}|${trainingId}` -> orderId
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const role = (r.role ?? "").toString().trim().toLowerCase();
+      if (role === "sponsor") continue;
+      if (role !== "learner") {
+        if (clean(r.email) || clean(r.name)) result.failed.push({ row: i + 1, role: clean(r.role), email: clean(r.email), name: clean(r.name), error: `Unknown role '${r.role ?? ""}' — use sponsor or learner` });
+        continue;
+      }
+      const email = (r.email ?? "").toString().trim().toLowerCase();
+      const fail = (error) => result.failed.push({ row: i + 1, role: "learner", email: email || null, name: clean(r.name), error });
+      const warn = (warning) => result.warnings.push({ row: i + 1, email: email || null, name: clean(r.name), warning });
+      if (!validEmail(email)) { fail("Invalid or missing email"); continue; }
+      if (clean(r.communication_email) && !validEmail(r.communication_email)) { fail("Invalid communication_email"); continue; }
+
+      // Resolve the training (if any) BEFORE creating the account, so an unknown
+      // code or a full training fails the row cleanly with no partial writes.
+      const tCode = clean(r.training_code);
+      let training = null;
+      if (tCode) {
+        try { training = await resolveTraining(tx, tCode); }
+        catch { fail(`Unknown training_code '${tCode}'`); continue; }
+        const [{ n: confirmed } = { n: 0 }] = (await tx.execute(
+          sql`SELECT count(*)::int AS n FROM enrolments WHERE training_id = ${training.id} AND status = 'confirmed'`
+        )).rows;
+        if (training.capacity != null && confirmed >= training.capacity) { fail(`Training '${tCode}' is at full capacity`); continue; }
+      }
+
+      const name = clean(r.name);
+      const { id: userId, created } = await upsertUser(email, name, clean(r.communication_email), "learner");
+
+      // Participant (find by email; fill blanks only).
+      const [existingP] = await tx.select().from(participants).where(eq(participants.email, email)).limit(1);
+      let participantId;
+      if (!existingP) {
+        const [p] = await tx.insert(participants)
+          .values({ userId, name: name || email, email, phone: clean(r.phone), jobTitle: clean(r.job_title), city: clean(r.city), country: clean(r.country) })
+          .returning({ id: participants.id });
+        participantId = p.id;
+      } else {
+        participantId = existingP.id;
+        const pset = { updatedAt: new Date() };
+        if (!existingP.userId) pset.userId = userId;
+        if (name && !existingP.name) pset.name = name;
+        if (clean(r.phone) && !existingP.phone) pset.phone = clean(r.phone);
+        if (clean(r.job_title) && !existingP.jobTitle) pset.jobTitle = clean(r.job_title);
+        if (clean(r.city) && !existingP.city) pset.city = clean(r.city);
+        if (clean(r.country) && !existingP.country) pset.country = clean(r.country);
+        if (Object.keys(pset).length > 1) await tx.update(participants).set(pset).where(eq(participants.id, participantId));
+      }
+      await upsertProfile(userId, r);
+      if (created) { result.learners_created++; newUsers.push({ id: userId, name: name || email, email }); }
+      else result.learners_updated++;
+
+      // Resolve sponsor (this sheet first, then existing DB sponsors).
+      let sponsorId = null;
+      const sEmail = (r.sponsor_email ?? "").toString().trim().toLowerCase();
+      if (sEmail) {
+        sponsorId = sponsorByEmail.get(sEmail) ?? null;
+        if (!sponsorId) {
+          const [s] = await tx.select({ id: users.id }).from(users).where(and(eq(users.email, sEmail), eq(users.role, "sponsor"))).limit(1);
+          sponsorId = s?.id ?? null;
+        }
+        if (!sponsorId) warn(`Sponsor '${sEmail}' not found — imported without a sponsor link`);
+      }
+
+      // Enrolment (optional). The sponsor link materialises through the order.
+      if (training) {
+        let orderId = null;
+        if (sponsorId) {
+          const key = `${sponsorId}|${training.id}`;
+          orderId = orderCache.get(key) ?? null;
+          if (!orderId) {
+            const [o] = await tx.insert(orders)
+              .values({ externalOrderId: `BULK-${randomUUID()}`, sponsorUserId: sponsorId, trainingId: training.id, scheduleId: training.scheduleId ?? null, paymentStatus: "paid", courseName: training.title })
+              .returning({ id: orders.id });
+            orderId = o.id;
+            orderCache.set(key, orderId);
+          }
+        }
+
+        const ins = await tx.insert(enrolments)
+          .values({ trainingId: training.id, participantId, orderId, status: "confirmed" })
+          .onConflictDoNothing()
+          .returning({ id: enrolments.id });
+        if (ins.length === 0) { warn(`Already enrolled in '${tCode}'`); continue; }
+        result.enrolled++;
+        const [{ n } = { n: 0 }] = (await tx.execute(
+          sql`SELECT count(*)::int AS n FROM enrolments WHERE training_id = ${training.id} AND status = 'confirmed'`
+        )).rows;
+        await tx.update(trainingIds).set({ enrolledCount: n, updatedAt: new Date() }).where(eq(trainingIds.id, training.id));
+      } else if (sponsorId) {
+        warn("sponsor_email set but no training_code — the sponsor link needs an enrolment, so it was skipped");
+      }
+    }
+
+    await writeAudit(tx, {
+      entityType: "corporate_import", entityId: randomUUID(),
+      action: dry_run ? "corporate_import_preview" : "corporate_import",
+      actorId: adminId, after: { ...result, warnings: result.warnings.length, failed: result.failed.length }, ipAddress: ip,
+    });
+
+    if (dry_run) throw { __dryRun: true, result };
+    return result;
+  }
+
+  try {
+    const r = await db.transaction(work);
+    if (send_setup_emails) {
+      for (const u of newUsers) await provisionAccountSetup(u, "setup");
+    }
+    return r;
+  } catch (e) {
+    if (e && e.__dryRun) return e.result;
+    throw e;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────

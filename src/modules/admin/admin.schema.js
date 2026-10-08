@@ -205,3 +205,30 @@ export const trainerEmailSchema = z.object({
 export const changeRoleSchema = z.object({
   role: z.enum(["learner", "sponsor"]),
 });
+
+// Corporate bulk import (Excel → JSON rows). Lenient on purpose — each row is
+// validated in the service so one bad row never fails the whole batch.
+export const bulkImportCorporateSchema = z.object({
+  // Preview without writing (dry run), and whether to send setup emails.
+  dry_run: z.coerce.boolean().optional().default(false),
+  send_setup_emails: z.coerce.boolean().optional().default(true),
+  rows: z
+    .array(
+      z.object({
+        name: z.string().trim().max(255).optional().nullable(),
+        email: z.string().trim().max(255).optional().nullable(),
+        communication_email: z.string().trim().max(255).optional().nullable(),
+        phone: z.string().trim().max(50).optional().nullable(),
+        company: z.string().trim().max(255).optional().nullable(),
+        country: z.string().trim().max(120).optional().nullable(),
+        city: z.string().trim().max(120).optional().nullable(),
+        industry: z.string().trim().max(150).optional().nullable(),
+        job_title: z.string().trim().max(150).optional().nullable(),
+        role: z.string().trim().max(32).optional().nullable(),
+        training_code: z.string().trim().max(64).optional().nullable(),
+        sponsor_email: z.string().trim().max(255).optional().nullable(),
+      })
+    )
+    .min(1)
+    .max(2000),
+});

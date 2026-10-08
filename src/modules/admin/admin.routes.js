@@ -64,6 +64,13 @@ router.post(
   asyncHandler(ctrl.resendTrainerSetupEmail)
 );
 
+router.post(
+  "/imports/corporate",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.bulkImportCorporate)
+);
+
 router.get(
   "/participants",
   verifyToken,
