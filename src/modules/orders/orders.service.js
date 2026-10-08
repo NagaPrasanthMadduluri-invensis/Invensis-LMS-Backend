@@ -21,6 +21,7 @@ const DELIVERY_MODE = {
   virtual: "virtual",
   classroom: "in_person",
   in_person: "in_person",
+  onsite: "in_person",
   hybrid: "hybrid",
   self_paced: "virtual",
   one_to_one: "one_to_one",
