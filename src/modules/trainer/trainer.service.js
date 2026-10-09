@@ -19,6 +19,8 @@ import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
 import { storageConfigured, presignPut, presignGet } from "../../lib/storage.js";
+import { computeDueForUpdate } from "../admin/admin.service.js";
+import { courseIdentifierFor } from "../../lib/certificates.js";
 
 // Assert the JWT user is the trainer currently assigned to `trainingId`.
 // Returns the trainer id; throws 403 otherwise. `runner` is a db or tx handle.
@@ -86,7 +88,11 @@ export async function listMyTrainings(userId) {
       enrolledCount: trainingIds.enrolledCount,
       startDate: schedules.startDate,
       endDate: schedules.endDate,
+      hoursPerDay: schedules.hoursPerDay,
       timezone: schedules.timezone,
+      // The CMS event code ("INL000055"), shown on the card beside the Training ID.
+      externalEventCode: schedules.externalEventCode,
+      externalEventId: schedules.externalEventId,
     })
     .from(trainerAssignments)
     .innerJoin(trainingIds, eq(trainerAssignments.trainingId, trainingIds.id))
@@ -106,7 +112,10 @@ export async function listMyTrainings(userId) {
       enrolled_count: r.enrolledCount,
       start_date: r.startDate,
       end_date: r.endDate,
+      hours_per_day: r.hoursPerDay,
       timezone: r.timezone,
+      event_code: courseIdentifierFor({ eventCode: r.externalEventCode, eventId: r.externalEventId }),
+      due_for_update: computeDueForUpdate(r.status, r.endDate),
     })),
   };
 }
