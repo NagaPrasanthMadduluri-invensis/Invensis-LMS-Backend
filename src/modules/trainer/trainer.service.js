@@ -209,7 +209,9 @@ export async function getTrainingDetail(userId, trainingRef) {
     .from(enrolments)
     .innerJoin(participants, eq(enrolments.participantId, participants.id))
     .leftJoin(userProfiles, eq(participants.userId, userProfiles.userId))
-    .where(eq(enrolments.trainingId, training.id))
+    // A cancelled enrolment is no longer part of this training — the trainer
+    // shouldn't see them on the roster.
+    .where(and(eq(enrolments.trainingId, training.id), notInArray(enrolments.status, ["cancelled"])))
     .orderBy(asc(participants.name));
 
   const response = {
