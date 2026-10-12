@@ -1397,8 +1397,10 @@ export async function getTrainerDetail(trainerId) {
     .limit(1);
   if (!row) throw new AppError("Trainer not found", 404);
 
-  // Every training the trainer has been assigned to, enriched with schedule
-  // dates + seat counts so the admin can see the full picture per training.
+  // The trainer's currently-active assignments, enriched with schedule dates +
+  // seat counts so the admin can see the full picture per training. Reassigned
+  // (removed) assignments are excluded — a training the trainer no longer owns
+  // only confuses the admin's view of who is running what.
   const history = await db
     .select({
       trainingId: trainerAssignments.trainingId,
@@ -1417,7 +1419,7 @@ export async function getTrainerDetail(trainerId) {
     .from(trainerAssignments)
     .innerJoin(trainingIds, eq(trainerAssignments.trainingId, trainingIds.id))
     .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
-    .where(eq(trainerAssignments.trainerId, trainerId))
+    .where(and(eq(trainerAssignments.trainerId, trainerId), isNull(trainerAssignments.removedAt)))
     .orderBy(desc(trainerAssignments.assignedAt));
 
   // Feedback ratings come from the post-training survey learners submit — stored
@@ -1434,7 +1436,8 @@ export async function getTrainerDetail(trainerId) {
     FROM certificates c
     JOIN enrolments e ON e.id = c.enrolment_id
     WHERE e.training_id IN (
-      SELECT training_id FROM trainer_assignments WHERE trainer_id = ${trainerId}
+      SELECT training_id FROM trainer_assignments
+      WHERE trainer_id = ${trainerId} AND removed_at IS NULL
     )
   `;
 
