@@ -10,6 +10,7 @@ import {
   analyticsQuerySchema,
   createSurveySchema,
   setTrainingStatusSchema,
+  updateZoomIdSchema,
   rescheduleTrainingSchema,
   composeEmailSchema,
   trainerEmailSchema,
@@ -53,6 +54,22 @@ export async function getAnalytics(req, res) {
 export async function listTrainings(req, res) {
   const result = await adminService.listTrainings();
   res.json(result);
+}
+
+export async function listTrainingTracker(req, res) {
+  const result = await adminService.listTrainingTracker();
+  res.json(result);
+}
+
+export async function updateTrainingZoomId(req, res) {
+  const { zoom_id } = updateZoomIdSchema.parse(req.body);
+  const training = await adminService.updateTrainingZoomId(
+    req.user.user_id,
+    req.params.trainingId,
+    zoom_id ?? null,
+    req.ip
+  );
+  res.json({ training });
 }
 
 export async function getTrainingDetail(req, res) {

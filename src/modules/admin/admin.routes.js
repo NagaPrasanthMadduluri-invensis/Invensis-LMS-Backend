@@ -28,6 +28,15 @@ router.get(
   asyncHandler(ctrl.listTrainings)
 );
 
+// Sales trainings-tracker (dense, month-grouped). Declared before the
+// `/trainings/:trainingId` param route so "tracker" isn't read as an id.
+router.get(
+  "/trainings/tracker",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.listTrainingTracker)
+);
+
 router.get(
   "/trainers",
   verifyToken,
@@ -203,6 +212,13 @@ router.patch(
   verifyToken,
   requireRole("admin"),
   asyncHandler(ctrl.setTrainingStatus)
+);
+
+router.patch(
+  "/trainings/:trainingId/zoom-id",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.updateTrainingZoomId)
 );
 
 router.patch(

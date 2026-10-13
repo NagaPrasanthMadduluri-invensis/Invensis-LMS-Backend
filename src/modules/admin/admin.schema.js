@@ -29,6 +29,11 @@ export const setTrainingStatusSchema = z.object({
   force: z.boolean().optional(),
 });
 
+// The one editable cell on the sales trainings-tracker. Free text; empty clears.
+export const updateZoomIdSchema = z.object({
+  zoom_id: z.string().trim().max(120).nullable().optional(),
+});
+
 // Postpone + reschedule. HH:MM or HH:MM:SS times.
 //
 // `session_dates` is the real input: the individual days the training runs on,

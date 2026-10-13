@@ -1,0 +1,1 @@
+ALTER TABLE "training_ids" ADD COLUMN "zoom_id" text;

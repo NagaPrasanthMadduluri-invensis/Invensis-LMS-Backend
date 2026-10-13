@@ -697,6 +697,98 @@ export async function listTrainings() {
   };
 }
 
+/* ── Trainings tracker (sales view) ──
+   A dense, spreadsheet-style view of EVERY training for the sales team, grouped
+   by month on the client. Returns the raw fields the grid needs; the client
+   derives the IST column, the weekday/weekend tag, the region and the month
+   bands (reusing the same timezone + region helpers the rest of the portal uses).
+   Newest schedule first, matching the admin's working set. */
+export async function listTrainingTracker() {
+  const rows = await db
+    .select({
+      id: trainingIds.id,
+      code: trainingIds.code,
+      title: trainingIds.title,
+      status: trainingIds.status,
+      deliveryMode: trainingIds.deliveryMode,
+      enrolledCount: trainingIds.enrolledCount,
+      capacity: trainingIds.capacity,
+      zoomId: trainingIds.zoomId,
+      externalEventCode: schedules.externalEventCode,
+      externalEventId: schedules.externalEventId,
+      startDate: schedules.startDate,
+      endDate: schedules.endDate,
+      sessionDates: schedules.sessionDates,
+      startTime: schedules.startTime,
+      endTime: schedules.endTime,
+      hoursPerDay: schedules.hoursPerDay,
+      timezone: schedules.timezone,
+      countryCode: schedules.countryCode,
+      venue: schedules.venue,
+      trainerName: users.name,
+    })
+    .from(trainingIds)
+    .leftJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+    .leftJoin(
+      trainerAssignments,
+      and(eq(trainerAssignments.trainingId, trainingIds.id), isNull(trainerAssignments.removedAt))
+    )
+    .leftJoin(trainers, eq(trainerAssignments.trainerId, trainers.id))
+    .leftJoin(users, eq(trainers.userId, users.id))
+    .orderBy(sql`${schedules.startDate} DESC NULLS LAST`, desc(trainingIds.createdAt));
+
+  return {
+    trainings: rows.map((r) => ({
+      id: r.id,
+      code: r.code, // TRN-YYYY-NNNN
+      // The CMS event code ("INVL3179") the Excel sheet uses as "Training ID".
+      event_code: courseIdentifierFor({ eventCode: r.externalEventCode, eventId: r.externalEventId }),
+      title: r.title,
+      status: r.status,
+      delivery_mode: r.deliveryMode,
+      start_date: r.startDate,
+      end_date: r.endDate,
+      session_dates: r.sessionDates,
+      start_time: r.startTime,
+      end_time: r.endTime,
+      hours_per_day: r.hoursPerDay,
+      timezone: r.timezone,
+      country_code: r.countryCode,
+      venue: r.venue,
+      enrolled_count: r.enrolledCount,
+      capacity: r.capacity,
+      trainer_name: r.trainerName ?? null,
+      zoom_id: r.zoomId ?? null,
+    })),
+  };
+}
+
+// Set/clear a training's Zoom host label — the only editable cell on the tracker.
+export async function updateTrainingZoomId(adminId, trainingRef, zoomId, ip) {
+  return db.transaction(async (tx) => {
+    const training = await resolveTraining(tx, trainingRef);
+    const before = training.zoomId ?? null;
+    const value = typeof zoomId === "string" && zoomId.trim() !== "" ? zoomId.trim() : null;
+
+    await tx
+      .update(trainingIds)
+      .set({ zoomId: value, updatedAt: new Date() })
+      .where(eq(trainingIds.id, training.id));
+
+    await writeAudit(tx, {
+      entityType: "training_id",
+      entityId: training.id,
+      action: "zoom_id_updated",
+      actorId: adminId,
+      before: { zoom_id: before },
+      after: { zoom_id: value },
+      ipAddress: ip,
+    });
+
+    return { id: training.id, code: training.code, zoom_id: value };
+  });
+}
+
 /* ── Full training detail for admin: schedule + trainer + participants ── */
 export async function getTrainingDetail(trainingRef) {
   const training = await resolveTraining(db, trainingRef);

@@ -228,6 +228,11 @@ export const trainingIds = pgTable(
     meetingTriggeredBy: uuid("meeting_triggered_by").references(() => users.id),
     meetingTriggeredAt: timestamp("meeting_triggered_at", { withTimezone: true }),
 
+    // Zoom host account label for the sales trainings-tracker (e.g. "Arvi",
+    // "Ops 1"). Free text, admin-maintained; the one editable field on the
+    // tracker grid. Null until set.
+    zoomId: text("zoom_id"),
+
     // Course facts resolved from the CMS at order-confirm time (by course slug).
     // Drive conditional rendering in the portals. null = not resolved yet.
     courseSlug: text("course_slug"),
