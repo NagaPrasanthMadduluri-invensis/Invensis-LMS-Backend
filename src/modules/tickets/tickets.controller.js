@@ -53,3 +53,16 @@ export async function adminReply(req, res) {
     .status(201)
     .json(await ticketService.addAdminMessage(req.user.user_id, req.params.ticketId, body, req.ip));
 }
+
+export async function adminEditMessage(req, res) {
+  const { body } = ticketMessageSchema.parse(req.body);
+  res.json(
+    await ticketService.editAdminMessage(
+      req.user.user_id,
+      req.params.ticketId,
+      req.params.messageId,
+      body,
+      req.ip
+    )
+  );
+}

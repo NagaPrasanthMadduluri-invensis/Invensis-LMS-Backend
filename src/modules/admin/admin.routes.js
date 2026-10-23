@@ -292,4 +292,12 @@ router.post(
   asyncHandler(ticketCtrl.adminReply)
 );
 
+// Edit an admin message — allowed only before the participant replies after it.
+router.patch(
+  "/tickets/:ticketId/messages/:messageId",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ticketCtrl.adminEditMessage)
+);
+
 export default router;

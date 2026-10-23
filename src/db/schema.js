@@ -560,6 +560,9 @@ export const ticketMessages = pgTable(
     authorId: uuid("author_id").references(() => users.id), // null = system note
     authorRole: text("author_role").notNull(), // 'admin' | 'learner'
     body: text("body").notNull(),
+    // Set when an admin edits their own message (allowed only before the
+    // participant has replied after it). Null = never edited.
+    editedAt: timestamp("edited_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

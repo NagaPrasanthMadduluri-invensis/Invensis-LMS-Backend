@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../config/db.js";
 import { tickets, ticketMessages, participants, trainingIds, enrolments, users } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
@@ -83,18 +83,29 @@ async function loadMessages(runner, ticketId) {
       authorRole: ticketMessages.authorRole,
       authorName: users.name,
       body: ticketMessages.body,
+      editedAt: ticketMessages.editedAt,
       createdAt: ticketMessages.createdAt,
     })
     .from(ticketMessages)
     .leftJoin(users, eq(ticketMessages.authorId, users.id))
     .where(eq(ticketMessages.ticketId, ticketId))
     .orderBy(asc(ticketMessages.createdAt));
+
+  // An admin message is editable only until the participant replies after it —
+  // i.e. there is no learner message with a later timestamp.
+  const lastLearnerAt = rows
+    .filter((m) => m.authorRole === "learner")
+    .reduce((max, m) => (m.createdAt > max ? m.createdAt : max), new Date(0));
+
   return rows.map((m) => ({
     id: m.id,
     author_role: m.authorRole,
     author_name: m.authorName || (m.authorRole === "admin" ? "Support team" : "Learner"),
     body: m.body,
     created_at: m.createdAt,
+    edited_at: m.editedAt ?? null,
+    // Consumed by the admin UI; harmless for the learner view, which ignores it.
+    editable: m.authorRole === "admin" && m.createdAt > lastLearnerAt,
   }));
 }
 
@@ -338,6 +349,53 @@ export async function addAdminMessage(adminId, ticketId, body, ip) {
     }), "ticket-admin-reply");
   }
   return result;
+}
+
+// Admin edits one of their own messages — allowed only while the participant
+// hasn't replied after it (no learner message with a later timestamp). No email
+// is sent on an edit; the learner only ever sees the corrected text.
+export async function editAdminMessage(adminId, ticketId, messageId, body, ip) {
+  await db.transaction(async (tx) => {
+    const [msg] = await tx
+      .select()
+      .from(ticketMessages)
+      .where(and(eq(ticketMessages.id, messageId), eq(ticketMessages.ticketId, ticketId)))
+      .limit(1);
+    if (!msg) throw new AppError("Message not found", 404);
+    if (msg.authorRole !== "admin") throw new AppError("Only the support team's own messages can be edited", 403);
+
+    const [laterLearner] = await tx
+      .select({ id: ticketMessages.id })
+      .from(ticketMessages)
+      .where(
+        and(
+          eq(ticketMessages.ticketId, ticketId),
+          eq(ticketMessages.authorRole, "learner"),
+          gt(ticketMessages.createdAt, msg.createdAt)
+        )
+      )
+      .limit(1);
+    if (laterLearner) {
+      throw new AppError("This message can no longer be edited — the participant has already replied.", 409);
+    }
+
+    await tx
+      .update(ticketMessages)
+      .set({ body, editedAt: new Date() })
+      .where(eq(ticketMessages.id, messageId));
+
+    await writeAudit(tx, {
+      entityType: "ticket",
+      entityId: ticketId,
+      action: "ticket_message_edited",
+      actorId: adminId,
+      before: { body: msg.body },
+      after: { body },
+      ipAddress: ip,
+    });
+  });
+
+  return getAdminTicket(ticketId);
 }
 
 export async function updateTicketStatus(adminId, id, body, ip) {
