@@ -426,8 +426,12 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
     const endTime = normalizeTime(body.end_time || schedule.endTime);
     const timezone = body.timezone ?? schedule.timezone;
 
-    if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
-      throw new AppError("The daily end time must be after the start time", 422);
+    // Daily window length in minutes. A window may legitimately cross midnight
+    // (e.g. an evening class that ends after 00:00), so wrap into [0,1440). The
+    // only invalid case is start == end (a zero-length day).
+    const minutesPerDay = ((timeToMinutes(endTime) - timeToMinutes(startTime)) + 1440) % 1440;
+    if (minutesPerDay === 0) {
+      throw new AppError("The daily end time can't be the same as the start time", 422);
     }
 
     // The exact training days. Sorted and de-duplicated so the first is always
@@ -443,8 +447,8 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
     // Totals follow from the window and the day count — never left to drift.
     // Both columns are integers, so the total is rounded from the exact
     // minutes rather than from the already-rounded per-day figure (a 8h30m
-    // window over 10 days is 85 hours, not 90).
-    const minutesPerDay = timeToMinutes(endTime) - timeToMinutes(startTime);
+    // window over 10 days is 85 hours, not 90). minutesPerDay is computed above
+    // and already handles a window that crosses midnight.
     const hoursPerDay = Math.round(minutesPerDay / 60);
     const durationHours = Math.round((minutesPerDay * sessionDates.length) / 60);
 
@@ -481,7 +485,10 @@ export async function rescheduleTraining(adminId, trainingRef, body, ip) {
     for (let i = 0; i < sessionDates.length; i++) {
       const d = sessionDates[i];
       const start = new Date(`${d}T${startTime}Z`);
-      const end = new Date(`${d}T${endTime}Z`);
+      // End is start + the (possibly midnight-crossing) daily window, so an
+      // overnight class lands its end on the following day rather than before
+      // its own start.
+      const end = new Date(start.getTime() + minutesPerDay * 60000);
       const row = existing[i];
       if (row) {
         await tx
