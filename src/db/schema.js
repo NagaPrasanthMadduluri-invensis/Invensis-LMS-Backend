@@ -634,3 +634,22 @@ export const courseResources = pgTable(
     trainingIdx: index("idx_resource_training").on(t.trainingId),
   })
 );
+
+/* ── webinars ──────────────────────────────────────────────
+   Admin-managed webinar announcements. The learner/sponsor banner shows the
+   soonest active one whose start is still more than 6h away (it drops off the
+   banner 6h before it starts). `start_at`/`end_at` are true instants; `timezone`
+   (IANA) is kept only to format the display label (e.g. "8:00–9:00 AM EST"). */
+export const webinars = pgTable("webinars", {
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  title: text("title").notNull(),
+  speaker: text("speaker"),
+  startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+  endAt: timestamp("end_at", { withTimezone: true }).notNull(),
+  timezone: text("timezone").notNull(), // IANA, for the display label only
+  registerUrl: text("register_url").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

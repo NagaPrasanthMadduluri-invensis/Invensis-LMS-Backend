@@ -14,6 +14,7 @@ import sponsorRoutes from "./modules/sponsor/sponsor.routes.js";
 import reportsRoutes from "./modules/reports/reports.routes.js";
 import cmsRoutes from "./modules/cms/cms.routes.js";
 import coursesRoutes from "./modules/courses/courses.routes.js";
+import webinarRoutes from "./modules/webinars/webinars.routes.js";
 import adminCertificateRoutes from "./modules/certificates/certificates.routes.js";
 import verifyRoutes from "./modules/certificates/verify.routes.js";
 import { notFound, errorHandler } from "./middleware/error-handler.js";
@@ -50,6 +51,7 @@ app.use("/api/sponsor", sponsorRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/cms", cmsRoutes);
 app.use("/api/courses", coursesRoutes);
+app.use("/api/webinars", webinarRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
