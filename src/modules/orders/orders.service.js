@@ -124,6 +124,20 @@ export async function ingestOrder(actorId, payload, ip) {
     // Serialise everything for this schedule (idempotent resolution).
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${scheduleCode}))`);
 
+    // Also serialise across sibling schedule_ids of the SAME event run. xCRM
+    // sometimes issues more than one schedule_id for one event_code + date range
+    // (e.g. a per-order schedule), and the per-schedule lock above does not cover
+    // that case — two such orders could otherwise each mint a training. Keyed on
+    // the "same run" identity (event_code + dates), matching the reuse lookup in
+    // step 2. Null event_code (manual/legacy) keeps the old behaviour.
+    const eventLockKey =
+      sch.event_code != null
+        ? `evt:${sch.event_code}|${sch.start_date}|${sch.end_date}`
+        : null;
+    if (eventLockKey) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${eventLockKey}))`);
+    }
+
     /* ── 1. Schedule (reuse if it already exists) ── */
     let [schedule] = await tx
       .select()
@@ -162,12 +176,55 @@ export async function ingestOrder(actorId, payload, ip) {
         .returning();
     }
 
-    /* ── 2. Resolve Training ID (idempotent) ── */
+    /* ── 2. Resolve Training ID (idempotent) ──
+       First by this schedule. If none, reuse a live training for the SAME event
+       run — xCRM can issue more than one schedule_id for one event_code + date
+       range, and the business tracks a run by its event code, so those sibling
+       schedules must share a single TRN rather than mint a duplicate. */
     let [training] = await tx
       .select()
       .from(trainingIds)
       .where(and(eq(trainingIds.scheduleId, schedule.id), ne(trainingIds.status, "cancelled")))
       .limit(1);
+
+    let reused = false;
+    if (!training && schedule.externalEventCode) {
+      // Match a non-cancelled training whose (different) schedule shares the same
+      // event_code + start/end dates — that identifies one event run regardless of
+      // how xCRM split it into schedule_ids. Earliest schedule is the canonical
+      // anchor.
+      const sibling = await tx
+        .select({ t: trainingIds })
+        .from(trainingIds)
+        .innerJoin(schedules, eq(trainingIds.scheduleId, schedules.id))
+        .where(
+          and(
+            ne(trainingIds.status, "cancelled"),
+            ne(schedules.id, schedule.id),
+            eq(schedules.externalEventCode, schedule.externalEventCode),
+            eq(schedules.startDate, schedule.startDate),
+            eq(schedules.endDate, schedule.endDate)
+          )
+        )
+        .orderBy(schedules.createdAt)
+        .limit(1);
+      if (sibling.length) {
+        training = sibling[0].t;
+        reused = true;
+        await writeAudit(tx, {
+          entityType: "training_id",
+          entityId: training.id,
+          action: "training_reused_for_duplicate_schedule",
+          actorId,
+          after: {
+            code: training.code,
+            event_code: schedule.externalEventCode,
+            new_schedule_code: scheduleCode,
+          },
+          ipAddress: ip,
+        });
+      }
+    }
 
     let trainingCreated = false;
     if (!training) {
@@ -359,6 +416,7 @@ export async function ingestOrder(actorId, payload, ip) {
       training_id: training.id,
       training_code: training.code,
       training_created: trainingCreated,
+      training_reused: reused,
       participants: learners.length,
       new_enrolments: newEnrolments,
       enrolled_count: cnt.rows?.[0]?.n ?? 0,
