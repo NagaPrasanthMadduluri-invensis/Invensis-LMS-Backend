@@ -15,6 +15,9 @@ router.get("/", asyncHandler(ctrl.listAll));
 // Completed trainings, for the picker.
 router.get("/trainings", asyncHandler(ctrl.listTrainings));
 
+// Count of completed trainings with certificates ready to release (red-dot alert).
+router.get("/pending-release-count", asyncHandler(ctrl.pendingReleaseCount));
+
 // One training: header stats + every learner's certificate line.
 router.get("/trainings/:trainingRef", asyncHandler(ctrl.trainingDetail));
 

@@ -184,6 +184,29 @@ export async function listCertifiableTrainings() {
   };
 }
 
+/**
+ * How many completed trainings have at least one certificate that is generated
+ * but not yet released — i.e. where the admin's Release button is live. Drives
+ * the "pending release" red dot on the admin sidebar; kept as a single count
+ * query so it's cheap to poll from an always-mounted sidebar.
+ */
+export async function countTrainingsPendingRelease() {
+  const [row] = await db
+    .select({ n: sql`count(DISTINCT ${trainingIds.id})::int` })
+    .from(trainingIds)
+    .innerJoin(
+      enrolments,
+      and(
+        eq(enrolments.trainingId, trainingIds.id),
+        inArray(enrolments.status, ELIGIBLE_ENROLMENT_STATUSES)
+      )
+    )
+    .innerJoin(certificates, eq(certificates.enrolmentId, enrolments.id))
+    .where(and(eq(trainingIds.status, "completed"), isNull(certificates.releasedAt)));
+
+  return { pending_release_trainings: row?.n ?? 0 };
+}
+
 /*
  * One learner's certificate line.
  *

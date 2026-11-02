@@ -15,6 +15,10 @@ export async function listTrainings(_req, res) {
   res.json(await svc.listCertifiableTrainings());
 }
 
+export async function pendingReleaseCount(_req, res) {
+  res.json(await svc.countTrainingsPendingRelease());
+}
+
 export async function trainingDetail(req, res) {
   res.json(await svc.getTrainingCertificates(req.params.trainingRef));
 }
