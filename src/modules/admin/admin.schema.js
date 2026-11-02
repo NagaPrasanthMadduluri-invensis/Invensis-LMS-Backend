@@ -144,17 +144,16 @@ export const cancelEnrolmentSchema = z.object({
   reason: z.string().trim().min(1, "A reason is required"),
 });
 
-// Mark a seat's exam voucher booked / not booked. validity_months is required
-// (and validated against the allowed windows) only when booking; the service
-// re-checks it against VOUCHER_VALIDITY_MONTHS as the source of truth.
+// Mark a seat's exam voucher booked / not booked. expires_at (a YYYY-MM-DD date)
+// is required only when booking; the service re-checks it must be today or later.
 export const setExamVoucherSchema = z
   .object({
     status: z.enum(["booked", "not_booked"]),
-    validity_months: z.coerce.number().int().positive().optional(),
+    expires_at: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD").optional(),
   })
-  .refine((v) => v.status !== "booked" || v.validity_months != null, {
-    message: "validity_months is required when booking",
-    path: ["validity_months"],
+  .refine((v) => v.status !== "booked" || v.expires_at != null, {
+    message: "expires_at is required when booking",
+    path: ["expires_at"],
   });
 
 // Analytics dashboard filters. Every field is optional — an omitted field means

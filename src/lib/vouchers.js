@@ -3,29 +3,22 @@ import { db } from "../config/db.js";
 import { examVoucherBookings } from "../db/schema.js";
 
 /**
- * Validity windows an admin may pick for an exam voucher, in whole months. The
- * dropdown in the portal and the server-side validation both read this list, so
- * the two can never drift. Order is the order shown.
+ * Validate an admin-chosen voucher expiry date. Must be a real calendar day in
+ * `YYYY-MM-DD` form and today or later — a voucher can't expire in the past.
+ * The day is compared in UTC, matching how `expires_at` (a plain date) is stored
+ * and how the reminder job's `CURRENT_DATE` comparisons behave.
  */
-export const VOUCHER_VALIDITY_MONTHS = [3, 6, 12];
-
-export function isValidValidityMonths(n) {
-  return VOUCHER_VALIDITY_MONTHS.includes(Number(n));
-}
-
-/**
- * Expiry day for a voucher booked on `bookedAt` (a Date) for `months` months.
- * Returns a `YYYY-MM-DD` string — expiry is a calendar day, not an instant.
- * Adding months can overflow a short month (e.g. booking on the 31st); JS Date
- * rolls that into the next month, which is the conventional, lenient behaviour.
- */
-export function computeExpiryDate(bookedAt, months) {
-  const d = new Date(bookedAt);
-  d.setMonth(d.getMonth() + Number(months));
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+export function isValidExpiryDate(str) {
+  if (typeof str !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const [y, m, day] = str.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
+  // Reject rolled-over dates like 2026-02-31 (Date would silently normalise).
+  if (d.getUTCFullYear() !== y || d.getUTCMonth() + 1 !== m || d.getUTCDate() !== day) {
+    return false;
+  }
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return d.getTime() >= todayUTC;
 }
 
 /**

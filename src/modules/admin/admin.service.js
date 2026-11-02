@@ -27,9 +27,7 @@ import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
 import { addonsByOrderIds } from "../../lib/addons.js";
 import {
-  VOUCHER_VALIDITY_MONTHS,
-  isValidValidityMonths,
-  computeExpiryDate,
+  isValidExpiryDate,
   serializeVoucher,
   vouchersByEnrolmentIds,
 } from "../../lib/vouchers.js";
@@ -2021,12 +2019,9 @@ export async function setExamVoucherBooking(adminId, enrolmentId, body, ip) {
   if (status !== "booked" && status !== "not_booked") {
     throw new AppError("status must be 'booked' or 'not_booked'", 422);
   }
-  const validityMonths = status === "booked" ? Number(body?.validity_months) : null;
-  if (status === "booked" && !isValidValidityMonths(validityMonths)) {
-    throw new AppError(
-      `validity_months must be one of: ${VOUCHER_VALIDITY_MONTHS.join(", ")}`,
-      422
-    );
+  const expiresAt = status === "booked" ? body?.expires_at : null;
+  if (status === "booked" && !isValidExpiryDate(expiresAt)) {
+    throw new AppError("expires_at must be a valid date (YYYY-MM-DD) that is today or later", 422);
   }
 
   // Resolve the seat, its participant (for the email) and the course title.
@@ -2045,18 +2040,17 @@ export async function setExamVoucherBooking(adminId, enrolmentId, body, ip) {
   if (!seat) throw new AppError("Enrolment not found", 404);
 
   const now = new Date();
-  const expiresAt = status === "booked" ? computeExpiryDate(now, validityMonths) : null;
 
   const values =
     status === "booked"
       ? {
           enrolmentId,
           status,
-          validityMonths,
+          validityMonths: null, // expiry is now an explicit date, not a window
           bookedAt: now,
           expiresAt,
           bookedBy: adminId,
-          reminderSentAt: null, // fresh window — let the reminder fire again
+          reminderSentAt: null, // fresh expiry — let the reminder fire again
           updatedAt: now,
         }
       : {
@@ -2081,7 +2075,7 @@ export async function setExamVoucherBooking(adminId, enrolmentId, body, ip) {
     entityId: enrolmentId,
     action: status === "booked" ? "exam_voucher_booked" : "exam_voucher_unbooked",
     actorId: adminId,
-    after: { status, validity_months: validityMonths, expires_at: expiresAt },
+    after: { status, expires_at: expiresAt },
     ipAddress: ip,
   });
 
@@ -2090,7 +2084,7 @@ export async function setExamVoucherBooking(adminId, enrolmentId, body, ip) {
     try {
       await sendVoucherBookedEmail(
         { name: seat.name, email: seat.email },
-        { courseName: seat.courseName, validityMonths, expiresOn: expiresAt }
+        { courseName: seat.courseName, expiresOn: expiresAt }
       );
       emailSent = true;
     } catch (err) {

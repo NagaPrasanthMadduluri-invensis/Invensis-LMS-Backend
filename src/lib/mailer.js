@@ -326,7 +326,6 @@ export async function sendVoucherBookedEmail(recipient, ctx) {
   const text =
     `Hi ${first},\n\n` +
     `Good news — your exam voucher for ${ctx.courseName} has been booked.\n\n` +
-    `Validity: ${ctx.validityMonths} months\n` +
     `Valid until: ${ctx.expiresOn}\n\n` +
     `Please redeem the voucher, schedule your exam and sit it before ${ctx.expiresOn}. ` +
     `You can see these details any time in your Invensis Learning portal:\n${dashboardUrl}\n\n` +
@@ -336,7 +335,6 @@ export async function sendVoucherBookedEmail(recipient, ctx) {
     cohortPara(`Good news — your exam voucher for <strong>${ctx.courseName}</strong> has been booked.`) +
     cohortTable("Voucher details", [
       ["Course", ctx.courseName],
-      ["Validity", `${ctx.validityMonths} months`],
       ["Valid until", `<span style="color:#018BD4;font-weight:700;">${ctx.expiresOn}</span>`],
     ]) +
     cohortChecklist("Next steps", [
