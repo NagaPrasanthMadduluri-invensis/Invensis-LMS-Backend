@@ -24,6 +24,7 @@ import { provisionAccountSetup, sendAccountSetupLink } from "../../lib/account-s
 import { courseIdentifierFor, issueCertificate } from "../../lib/certificates.js";
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
+import { addonsByOrderIds } from "../../lib/addons.js";
 import { sendComposedEmail } from "../../lib/mailer.js";
 import { fetchMailboxFor } from "../../lib/gmail-imap.js";
 import { getDashboard as getSponsorDashboard, listSponsoredLearners } from "../sponsor/sponsor.service.js";
@@ -882,6 +883,9 @@ export async function getTrainingDetail(trainingRef) {
     .where(eq(trainingSessions.trainingId, training.id))
     .orderBy(trainingSessions.dayNumber);
 
+  // Add-ons per seat (exam voucher, membership, …), batched over the roster.
+  const rosterAddons = await addonsByOrderIds(enrolled.map((e) => e.orderId));
+
   return {
     id: training.id,
     training_id: training.code,
@@ -951,6 +955,8 @@ export async function getTrainingDetail(trainingRef) {
       department: e.department ?? null,
       experience_years: e.experience ?? null,
       agent: e.agent ?? null,
+      // Add-ons bought with this seat (exam voucher, membership, …).
+      addons: (e.orderId && rosterAddons.get(e.orderId)) || [],
     })),
     sessions: sessions.map((s) => ({
       id: s.id,
@@ -1925,6 +1931,10 @@ export async function getParticipantDetail(participantId) {
     .where(eq(enrolments.participantId, participantId))
     .orderBy(desc(enrolments.enrolledAt));
 
+  // Add-ons bought with each seat (exam voucher, membership, …), from the order
+  // payload. Batched so the roster stays a fixed number of queries.
+  const addonMap = await addonsByOrderIds(rows.map((r) => r.orderId));
+
   const enrolled = rows.map((r) => ({
     enrolment_id: r.enrolmentId,
     training_id: r.trainingId,
@@ -1941,6 +1951,7 @@ export async function getParticipantDetail(participantId) {
     added_manually: r.orderId == null,
     certificate_issued: r.certificateCode != null,
     certificate_code: r.certificateCode ?? null,
+    addons: (r.orderId && addonMap.get(r.orderId)) || [],
     category: enrolmentCategory(r.status, r.trainingStatus),
   }));
 

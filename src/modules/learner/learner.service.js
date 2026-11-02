@@ -7,6 +7,7 @@ import {
   nextCertificateCode,
 } from "../../lib/certificates.js";
 import { env } from "../../config/env.js";
+import { extractAddons } from "../../lib/addons.js";
 import { listSchedules } from "../cms/cms.service.js";
 import { db } from "../../config/db.js";
 import {
@@ -86,15 +87,7 @@ async function listOrderAddons(orderId) {
     .where(eq(orders.id, orderId))
     .limit(1);
 
-  const items = row?.payload?.order?.addon_items;
-  if (!Array.isArray(items)) return [];
-
-  return items
-    .map((a) => ({
-      name: a?.addon_name ?? a?.name ?? null,
-      quantity: a?.quantity ?? null,
-    }))
-    .filter((a) => a.name);
+  return extractAddons(row?.payload);
 }
 
 // All trainings the logged-in user is enrolled in — their "My Courses" list.
