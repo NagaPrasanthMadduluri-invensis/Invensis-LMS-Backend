@@ -30,6 +30,14 @@ router.get(
   asyncHandler(ctrl.listMyTrainings)
 );
 
+// The caller's own booked exam vouchers — powers the in-portal booking banner.
+// Capability-based (own enrolments only), so no role gate.
+router.get(
+  "/voucher-bookings",
+  verifyToken,
+  asyncHandler(ctrl.listMyVoucherBookings)
+);
+
 router.get(
   "/training/:trainingId",
   verifyToken,

@@ -16,6 +16,7 @@ import {
   surveys,
   surveyResponses,
   attendanceRecords,
+  examVoucherBookings,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -25,7 +26,14 @@ import { courseIdentifierFor, issueCertificate } from "../../lib/certificates.js
 import { enqueueMeetingLinkRelease } from "../../lib/queue.js";
 import { recomputeEnrolmentAttendance } from "../../lib/attendance.js";
 import { addonsByOrderIds } from "../../lib/addons.js";
-import { sendComposedEmail } from "../../lib/mailer.js";
+import {
+  VOUCHER_VALIDITY_MONTHS,
+  isValidValidityMonths,
+  computeExpiryDate,
+  serializeVoucher,
+  vouchersByEnrolmentIds,
+} from "../../lib/vouchers.js";
+import { sendComposedEmail, sendVoucherBookedEmail } from "../../lib/mailer.js";
 import { fetchMailboxFor } from "../../lib/gmail-imap.js";
 import { getDashboard as getSponsorDashboard, listSponsoredLearners } from "../sponsor/sponsor.service.js";
 import {
@@ -885,6 +893,8 @@ export async function getTrainingDetail(trainingRef) {
 
   // Add-ons per seat (exam voucher, membership, …), batched over the roster.
   const rosterAddons = await addonsByOrderIds(enrolled.map((e) => e.orderId));
+  // Exam-voucher booking per seat, batched the same way.
+  const rosterVouchers = await vouchersByEnrolmentIds(enrolled.map((e) => e.enrolmentId));
 
   return {
     id: training.id,
@@ -957,6 +967,8 @@ export async function getTrainingDetail(trainingRef) {
       agent: e.agent ?? null,
       // Add-ons bought with this seat (exam voucher, membership, …).
       addons: (e.orderId && rosterAddons.get(e.orderId)) || [],
+      // Exam-voucher booking status for this seat (null when never booked).
+      voucher: rosterVouchers.get(e.enrolmentId) || null,
     })),
     sessions: sessions.map((s) => ({
       id: s.id,
@@ -1934,6 +1946,8 @@ export async function getParticipantDetail(participantId) {
   // Add-ons bought with each seat (exam voucher, membership, …), from the order
   // payload. Batched so the roster stays a fixed number of queries.
   const addonMap = await addonsByOrderIds(rows.map((r) => r.orderId));
+  // Exam-voucher booking per seat (null when never booked).
+  const voucherMap = await vouchersByEnrolmentIds(rows.map((r) => r.enrolmentId));
 
   const enrolled = rows.map((r) => ({
     enrolment_id: r.enrolmentId,
@@ -1952,6 +1966,7 @@ export async function getParticipantDetail(participantId) {
     certificate_issued: r.certificateCode != null,
     certificate_code: r.certificateCode ?? null,
     addons: (r.orderId && addonMap.get(r.orderId)) || [],
+    voucher: voucherMap.get(r.enrolmentId) || null,
     category: enrolmentCategory(r.status, r.trainingStatus),
   }));
 
@@ -1992,6 +2007,98 @@ export async function getParticipantDetail(participantId) {
       certificates: enrolled.filter((e) => e.certificate_issued).length,
     },
   };
+}
+
+/**
+ * Mark a seat's exam voucher as booked (with a validity window) or not booked.
+ * Upserts the one-per-enrolment booking row, writes an audit entry, and — when
+ * it becomes booked — emails the participant a confirmation (best-effort: a mail
+ * failure is logged, not fatal, so the status still saves). Returns the
+ * serialized voucher plus whether the email went out.
+ */
+export async function setExamVoucherBooking(adminId, enrolmentId, body, ip) {
+  const status = body?.status;
+  if (status !== "booked" && status !== "not_booked") {
+    throw new AppError("status must be 'booked' or 'not_booked'", 422);
+  }
+  const validityMonths = status === "booked" ? Number(body?.validity_months) : null;
+  if (status === "booked" && !isValidValidityMonths(validityMonths)) {
+    throw new AppError(
+      `validity_months must be one of: ${VOUCHER_VALIDITY_MONTHS.join(", ")}`,
+      422
+    );
+  }
+
+  // Resolve the seat, its participant (for the email) and the course title.
+  const [seat] = await db
+    .select({
+      enrolmentId: enrolments.id,
+      name: participants.name,
+      email: participants.email,
+      courseName: trainingIds.title,
+    })
+    .from(enrolments)
+    .innerJoin(participants, eq(participants.id, enrolments.participantId))
+    .innerJoin(trainingIds, eq(trainingIds.id, enrolments.trainingId))
+    .where(eq(enrolments.id, enrolmentId))
+    .limit(1);
+  if (!seat) throw new AppError("Enrolment not found", 404);
+
+  const now = new Date();
+  const expiresAt = status === "booked" ? computeExpiryDate(now, validityMonths) : null;
+
+  const values =
+    status === "booked"
+      ? {
+          enrolmentId,
+          status,
+          validityMonths,
+          bookedAt: now,
+          expiresAt,
+          bookedBy: adminId,
+          reminderSentAt: null, // fresh window — let the reminder fire again
+          updatedAt: now,
+        }
+      : {
+          enrolmentId,
+          status,
+          validityMonths: null,
+          bookedAt: null,
+          expiresAt: null,
+          bookedBy: adminId,
+          reminderSentAt: null,
+          updatedAt: now,
+        };
+
+  const [row] = await db
+    .insert(examVoucherBookings)
+    .values(values)
+    .onConflictDoUpdate({ target: examVoucherBookings.enrolmentId, set: values })
+    .returning();
+
+  await writeAudit(db, {
+    entityType: "exam_voucher_booking",
+    entityId: enrolmentId,
+    action: status === "booked" ? "exam_voucher_booked" : "exam_voucher_unbooked",
+    actorId: adminId,
+    after: { status, validity_months: validityMonths, expires_at: expiresAt },
+    ipAddress: ip,
+  });
+
+  let emailSent = false;
+  if (status === "booked" && seat.email) {
+    try {
+      await sendVoucherBookedEmail(
+        { name: seat.name, email: seat.email },
+        { courseName: seat.courseName, validityMonths, expiresOn: expiresAt }
+      );
+      emailSent = true;
+    } catch (err) {
+      console.error(`[voucher] confirmation email failed for ${seat.email}: ${err.message}`);
+    }
+  }
+
+  return { voucher: serializeVoucher(row), email_sent: emailSent };
 }
 
 // Edit participant details (name/phone/job_title). Email is the login identity

@@ -27,6 +27,9 @@ export const trainingStatusEnum = pgEnum("training_status", ["pending", "active"
 export const sessionStatusEnum = pgEnum("session_status", ["scheduled", "ongoing", "completed", "cancelled"]);
 export const enrolmentStatusEnum = pgEnum("enrolment_status", ["confirmed", "cancelled", "transferred", "completed", "failed"]);
 export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "present", "partial", "absent"]);
+// Exam-voucher booking state for a seat. `not_booked` is the resting state (and
+// the absence of a row); `booked` means an admin has reserved the voucher.
+export const examVoucherStatusEnum = pgEnum("exam_voucher_status", ["not_booked", "booked"]);
 export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
 export const surveyTypeEnum = pgEnum("survey_type", ["pre_training", "post_training"]);
 export const ticketCategoryEnum = pgEnum("ticket_category", ["reschedule_training", "cancel_training", "certificate_issue", "training_missed", "other"]);
@@ -381,6 +384,30 @@ export const enrolments = pgTable(
       .where(sql`status NOT IN ('cancelled', 'transferred')`),
   })
 );
+
+/* ── exam_voucher_bookings (one per enrolment/seat) ────────
+   Tracks whether an admin has booked a participant's exam voucher and, if so,
+   how long it's valid for. One row per enrolment (the voucher belongs to a
+   specific seat). No row == not booked; a row with status 'not_booked' records
+   that it was explicitly un-booked. `expiresAt` is derived at write time from
+   the booking date + validityMonths and drives the one-month-before reminder
+   job (guarded by `reminderSentAt` so it sends once). */
+export const examVoucherBookings = pgTable("exam_voucher_bookings", {
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  enrolmentId: uuid("enrolment_id").notNull().unique().references(() => enrolments.id),
+  status: examVoucherStatusEnum("status").notNull().default("not_booked"),
+  // Chosen validity window in whole months (e.g. 3 / 6 / 12). Null when not booked.
+  validityMonths: integer("validity_months"),
+  bookedAt: timestamp("booked_at", { withTimezone: true }),
+  // Calendar day the voucher expires (bookedAt::date + validityMonths). A plain
+  // date — expiry is a wall-clock day, not an instant.
+  expiresAt: date("expires_at"),
+  bookedBy: uuid("booked_by").references(() => users.id),
+  // Set when the one-month-before reminder email has gone out, so it sends once.
+  reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /* ── attendance_records (per-session, per-participant) ─────
    One row per (session, participant); its absence = not yet marked. Trainers

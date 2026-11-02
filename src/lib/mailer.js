@@ -318,6 +318,75 @@ export async function sendCohortRescheduledEmail(recipient, ctx) {
   });
 }
 
+// V1 — exam voucher booked for a learner (confirmation + validity/expiry).
+export async function sendVoucherBookedEmail(recipient, ctx) {
+  const first = firstNameOf(recipient.name);
+  const dashboardUrl = `${env.FRONTEND_URL}/courses`;
+  const subject = `Your exam voucher for ${ctx.courseName} is booked, ${first}`;
+  const text =
+    `Hi ${first},\n\n` +
+    `Good news — your exam voucher for ${ctx.courseName} has been booked.\n\n` +
+    `Validity: ${ctx.validityMonths} months\n` +
+    `Valid until: ${ctx.expiresOn}\n\n` +
+    `Please redeem the voucher, schedule your exam and sit it before ${ctx.expiresOn}. ` +
+    `You can see these details any time in your Invensis Learning portal:\n${dashboardUrl}\n\n` +
+    `Best of luck,\nThe Invensis Learning Team`;
+  const contentHtml =
+    cohortHead("Exam Voucher", `Your exam voucher is booked, ${first}`, ctx.courseName) +
+    cohortPara(`Good news — your exam voucher for <strong>${ctx.courseName}</strong> has been booked.`) +
+    cohortTable("Voucher details", [
+      ["Course", ctx.courseName],
+      ["Validity", `${ctx.validityMonths} months`],
+      ["Valid until", `<span style="color:#018BD4;font-weight:700;">${ctx.expiresOn}</span>`],
+    ]) +
+    cohortChecklist("Next steps", [
+      "Redeem your voucher with the exam body",
+      "Schedule your exam date",
+      `Complete the exam before <strong>${ctx.expiresOn}</strong>`,
+    ]) +
+    cohortButton("View my courses", dashboardUrl) +
+    cohortNote(`<strong>Questions about your voucher?</strong> Reply to this email and we'll help.`) +
+    cohortSignoff("Best of luck,", "The Invensis Learning Team");
+  return sendMail({
+    to: recipient.email,
+    subject,
+    text,
+    html: renderEmail({ subject, preheader: `Your exam voucher is booked — valid until ${ctx.expiresOn}.`, contentHtml }),
+  });
+}
+
+// V2 — reminder one month before an exam voucher expires.
+export async function sendVoucherExpiryReminderEmail(recipient, ctx) {
+  const first = firstNameOf(recipient.name);
+  const dashboardUrl = `${env.FRONTEND_URL}/courses`;
+  const subject = `Reminder: your ${ctx.courseName} exam voucher expires soon`;
+  const text =
+    `Hi ${first},\n\n` +
+    `Your exam voucher for ${ctx.courseName} expires on ${ctx.expiresOn} — about a month from now.\n\n` +
+    `If you haven't already, please redeem the voucher, schedule your exam and ` +
+    `complete it before it expires. Once it lapses it can't be reinstated.\n\n` +
+    `View the details in your Invensis Learning portal:\n${dashboardUrl}\n\n` +
+    `We're rooting for you,\nThe Invensis Learning Team`;
+  const contentHtml =
+    cohortHead("Voucher Reminder", "Your exam voucher expires soon", ctx.courseName) +
+    cohortAmber(`<strong>Heads up:</strong> your exam voucher expires on <strong>${ctx.expiresOn}</strong> — about a month away.`) +
+    cohortPara(`Hi ${first}, this is a friendly reminder to use your exam voucher for <strong>${ctx.courseName}</strong> before it lapses.`) +
+    cohortChecklist("Before it expires", [
+      "Redeem your voucher with the exam body",
+      "Schedule your exam date",
+      `Sit the exam before <strong>${ctx.expiresOn}</strong>`,
+    ]) +
+    cohortButton("View my courses", dashboardUrl) +
+    cohortNote(`<strong>Need a hand?</strong> Reply to this email and we'll help you get booked in.`) +
+    cohortSignoff("We're rooting for you,", "The Invensis Learning Team");
+  return sendMail({
+    to: recipient.email,
+    subject,
+    text,
+    html: renderEmail({ subject, preheader: `Your exam voucher expires on ${ctx.expiresOn}. Redeem it before then.`, contentHtml }),
+  });
+}
+
 export async function sendAccountSetupEmail(user, link) {
   const subject = "Set up your Invensis Learning Portal account";
   const text =

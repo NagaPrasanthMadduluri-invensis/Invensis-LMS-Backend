@@ -141,6 +141,13 @@ router.patch(
   asyncHandler(ctrl.completeEnrolment)
 );
 
+router.put(
+  "/enrolments/:enrolmentId/voucher",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.setExamVoucherBooking)
+);
+
 router.patch(
   "/enrolments/:enrolmentId/transfer",
   verifyToken,

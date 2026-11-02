@@ -274,6 +274,13 @@
       "when": 1793079031793,
       "tag": "0038_watery_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793609840205,
+      "tag": "0039_sparkling_the_hood",
+      "breakpoints": true
     }
   ]
 }

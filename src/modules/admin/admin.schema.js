@@ -144,6 +144,19 @@ export const cancelEnrolmentSchema = z.object({
   reason: z.string().trim().min(1, "A reason is required"),
 });
 
+// Mark a seat's exam voucher booked / not booked. validity_months is required
+// (and validated against the allowed windows) only when booking; the service
+// re-checks it against VOUCHER_VALIDITY_MONTHS as the source of truth.
+export const setExamVoucherSchema = z
+  .object({
+    status: z.enum(["booked", "not_booked"]),
+    validity_months: z.coerce.number().int().positive().optional(),
+  })
+  .refine((v) => v.status !== "booked" || v.validity_months != null, {
+    message: "validity_months is required when booking",
+    path: ["validity_months"],
+  });
+
 // Analytics dashboard filters. Every field is optional — an omitted field means
 // "no constraint on this dimension". Empty strings from the query string are
 // coerced to undefined so the frontend can send blank params harmlessly.

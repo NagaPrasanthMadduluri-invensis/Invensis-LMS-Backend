@@ -6,6 +6,7 @@ import {
   updateParticipantSchema,
   listParticipantsQuerySchema,
   cancelEnrolmentSchema,
+  setExamVoucherSchema,
   transferEnrolmentSchema,
   analyticsQuerySchema,
   createSurveySchema,
@@ -179,6 +180,17 @@ export async function updateParticipant(req, res) {
     req.ip
   );
   res.json({ participant });
+}
+
+export async function setExamVoucherBooking(req, res) {
+  const body = setExamVoucherSchema.parse(req.body);
+  const result = await adminService.setExamVoucherBooking(
+    req.user.user_id,
+    req.params.enrolmentId,
+    body,
+    req.ip
+  );
+  res.json(result);
 }
 
 export async function cancelEnrolment(req, res) {

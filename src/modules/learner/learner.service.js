@@ -8,6 +8,7 @@ import {
 } from "../../lib/certificates.js";
 import { env } from "../../config/env.js";
 import { extractAddons } from "../../lib/addons.js";
+import { vouchersByEnrolmentIds } from "../../lib/vouchers.js";
 import { listSchedules } from "../cms/cms.service.js";
 import { db } from "../../config/db.js";
 import {
@@ -26,6 +27,7 @@ import {
   users,
   userProfiles,
   orders,
+  examVoucherBookings,
 } from "../../db/schema.js";
 import { AppError } from "../../lib/errors.js";
 import { writeAudit } from "../../lib/audit.js";
@@ -203,6 +205,48 @@ export async function listMyTrainings(userId) {
   };
 }
 
+/**
+ * This learner's currently-booked exam vouchers, newest first. Powers the
+ * in-portal booking notification (a banner on the dashboard). Only 'booked'
+ * vouchers that haven't expired are returned — an expired one is no longer news.
+ */
+export async function listMyVoucherBookings(userId) {
+  const rows = await db
+    .select({
+      id: examVoucherBookings.id,
+      trainingId: trainingIds.id,
+      trainingCode: trainingIds.code,
+      courseName: trainingIds.title,
+      validityMonths: examVoucherBookings.validityMonths,
+      bookedAt: examVoucherBookings.bookedAt,
+      expiresAt: examVoucherBookings.expiresAt,
+    })
+    .from(examVoucherBookings)
+    .innerJoin(enrolments, eq(enrolments.id, examVoucherBookings.enrolmentId))
+    .innerJoin(participants, eq(participants.id, enrolments.participantId))
+    .innerJoin(trainingIds, eq(trainingIds.id, enrolments.trainingId))
+    .where(
+      and(
+        eq(participants.userId, userId),
+        eq(examVoucherBookings.status, "booked"),
+        sql`${examVoucherBookings.expiresAt} >= CURRENT_DATE`
+      )
+    )
+    .orderBy(desc(examVoucherBookings.bookedAt));
+
+  return {
+    vouchers: rows.map((r) => ({
+      id: r.id,
+      training_id: r.trainingId,
+      training_code: r.trainingCode,
+      course_name: r.courseName,
+      validity_months: r.validityMonths,
+      booked_at: r.bookedAt,
+      expires_at: r.expiresAt,
+    })),
+  };
+}
+
 export async function getTrainingDetail(userId, trainingRef) {
   const [training] = await db
     .select()
@@ -242,6 +286,9 @@ export async function getTrainingDetail(userId, trainingRef) {
   // the order payload xCRM sent, not in a table of their own, so they're read
   // from there for THIS learner's order only — never the training's other seats.
   const addons = await listOrderAddons(enrolled[0].orderId);
+
+  // Exam-voucher booking for THIS learner's seat (null when never booked).
+  const voucher = (await vouchersByEnrolmentIds([enrolled[0].id])).get(enrolled[0].id) || null;
 
   // Currently-assigned trainer (if any)
   const [trainer] = await db
@@ -308,6 +355,8 @@ export async function getTrainingDetail(userId, trainingRef) {
     // What this learner actually bought alongside the seat. Non-empty means the
     // UI shows the add-ons instead of the generic "not included" prompt.
     addons,
+    // Exam-voucher booking for this seat (null when the admin hasn't booked one).
+    voucher,
     // schedule offering fields (fall back to training-level values when no schedule is linked)
     duration_hours: schedule?.durationHours ?? null,
     hours_per_day: schedule?.hoursPerDay ?? null,
