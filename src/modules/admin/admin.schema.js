@@ -14,9 +14,12 @@ export const updateTrainingSchema = z
     meeting_platform: z.enum(["zoom", "teams", "other"]).optional(),
     meeting_released: z.boolean().optional(),
     min_seats_override: z.boolean().optional(),
+    // Operational delivery mode — the value shown across the portal. Fixed set
+    // (the delivery_mode enum); an admin can correct it after order ingest.
+    delivery_mode: z.enum(["virtual", "in_person", "hybrid", "one_to_one"]).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
-    message: "Provide trainer_id and/or meeting fields",
+    message: "Provide trainer_id, delivery_mode, and/or meeting fields",
   });
 
 // Set training status: Completed / Suspended / (re)Active. Rescheduling is a

@@ -192,6 +192,24 @@ export async function updateTraining(adminId, trainingRef, body, ip) {
       }
     }
 
+    /* ── Change delivery mode ── */
+    if (body.delivery_mode !== undefined && body.delivery_mode !== training.deliveryMode) {
+      await tx
+        .update(trainingIds)
+        .set({ deliveryMode: body.delivery_mode, updatedAt: new Date() })
+        .where(eq(trainingIds.id, trainingId));
+
+      await writeAudit(tx, {
+        entityType: "training_id",
+        entityId: trainingId,
+        action: "delivery_mode_changed",
+        actorId: adminId,
+        before: { delivery_mode: training.deliveryMode },
+        after: { delivery_mode: body.delivery_mode },
+        ipAddress: ip,
+      });
+    }
+
     const [updated] = await tx
       .select()
       .from(trainingIds)
