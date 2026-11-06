@@ -148,6 +148,13 @@ router.put(
   asyncHandler(ctrl.setExamVoucherBooking)
 );
 
+router.put(
+  "/enrolments/:enrolmentId/voucher/result",
+  verifyToken,
+  requireRole("admin"),
+  asyncHandler(ctrl.setExamVoucherResult)
+);
+
 router.patch(
   "/enrolments/:enrolmentId/transfer",
   verifyToken,

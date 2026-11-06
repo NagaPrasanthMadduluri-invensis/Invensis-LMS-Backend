@@ -385,6 +385,47 @@ export async function sendVoucherExpiryReminderEmail(recipient, ctx) {
   });
 }
 
+// V3 — exam result recorded by an admin (pass / fail).
+export async function sendVoucherResultEmail(recipient, ctx) {
+  const first = firstNameOf(recipient.name);
+  const dashboardUrl = `${env.FRONTEND_URL}/courses`;
+  const passed = ctx.result === "pass";
+  const subject = passed
+    ? `Congratulations — you passed your ${ctx.courseName} exam, ${first}!`
+    : `Your ${ctx.courseName} exam result`;
+  const text = passed
+    ? `Hi ${first},\n\n` +
+      `Great news — you passed your ${ctx.courseName} exam. Congratulations on this achievement!\n\n` +
+      `You can view your details in your Invensis Learning portal:\n${dashboardUrl}\n\n` +
+      `Warm congratulations,\nThe Invensis Learning Team`
+    : `Hi ${first},\n\n` +
+      `Your ${ctx.courseName} exam result has been recorded as: not passed this time.\n\n` +
+      `Don't be discouraged — many candidates succeed on a re-sit. If you'd like guidance on ` +
+      `re-scheduling or preparing, just reply to this email and we'll help.\n\n` +
+      `We're here to help,\nThe Invensis Learning Team`;
+  const contentHtml = passed
+    ? cohortHead("Exam Result", `Congratulations, ${first}!`, ctx.courseName) +
+      cohortPara(`Great news — you <strong>passed</strong> your ${ctx.courseName} exam. Congratulations on this well-earned achievement!`) +
+      cohortTable("Your result", [["Course", ctx.courseName], ["Result", `<span style="color:#1a7f37;font-weight:700;">Passed</span>`]]) +
+      cohortButton("View my courses", dashboardUrl) +
+      cohortSignoff("Warm congratulations,", "The Invensis Learning Team")
+    : cohortHead("Exam Result", "Your exam result", ctx.courseName) +
+      cohortPara(`Hi ${first}, your <strong>${ctx.courseName}</strong> exam result has been recorded as <strong>not passed</strong> this time.`) +
+      cohortAmber(`Don't be discouraged — many candidates pass on a re-sit. Reply to this email and we'll help you plan your next attempt.`) +
+      cohortButton("View my courses", dashboardUrl) +
+      cohortSignoff("We're here to help,", "The Invensis Learning Team");
+  return sendMail({
+    to: recipient.email,
+    subject,
+    text,
+    html: renderEmail({
+      subject,
+      preheader: passed ? `You passed your ${ctx.courseName} exam!` : `Your ${ctx.courseName} exam result is in.`,
+      contentHtml,
+    }),
+  });
+}
+
 export async function sendAccountSetupEmail(user, link) {
   const subject = "Set up your Invensis Learning Portal account";
   const text =

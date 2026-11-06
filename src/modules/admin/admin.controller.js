@@ -7,6 +7,7 @@ import {
   listParticipantsQuerySchema,
   cancelEnrolmentSchema,
   setExamVoucherSchema,
+  setExamVoucherResultSchema,
   transferEnrolmentSchema,
   analyticsQuerySchema,
   createSurveySchema,
@@ -185,6 +186,17 @@ export async function updateParticipant(req, res) {
 export async function setExamVoucherBooking(req, res) {
   const body = setExamVoucherSchema.parse(req.body);
   const result = await adminService.setExamVoucherBooking(
+    req.user.user_id,
+    req.params.enrolmentId,
+    body,
+    req.ip
+  );
+  res.json(result);
+}
+
+export async function setExamVoucherResult(req, res) {
+  const body = setExamVoucherResultSchema.parse(req.body);
+  const result = await adminService.setExamVoucherResult(
     req.user.user_id,
     req.params.enrolmentId,
     body,

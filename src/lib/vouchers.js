@@ -33,6 +33,8 @@ export function serializeVoucher(row) {
     validity_months: row.validityMonths ?? null,
     booked_at: row.bookedAt ?? null,
     expires_at: row.expiresAt ?? null,
+    result: row.result ?? null,
+    result_updated_at: row.resultUpdatedAt ?? null,
   };
 }
 

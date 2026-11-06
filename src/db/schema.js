@@ -30,6 +30,8 @@ export const attendanceStatusEnum = pgEnum("attendance_status", ["not_marked", "
 // Exam-voucher booking state for a seat. `not_booked` is the resting state (and
 // the absence of a row); `booked` means an admin has reserved the voucher.
 export const examVoucherStatusEnum = pgEnum("exam_voucher_status", ["not_booked", "booked"]);
+// Outcome of the exam a voucher was booked for. Null (no value) = not recorded yet.
+export const examResultEnum = pgEnum("exam_result", ["pass", "fail"]);
 export const setupTokenPurposeEnum = pgEnum("setup_token_purpose", ["setup", "reset"]);
 export const surveyTypeEnum = pgEnum("survey_type", ["pre_training", "post_training"]);
 export const ticketCategoryEnum = pgEnum("ticket_category", ["reschedule_training", "cancel_training", "certificate_issue", "training_missed", "other"]);
@@ -405,6 +407,11 @@ export const examVoucherBookings = pgTable("exam_voucher_bookings", {
   bookedBy: uuid("booked_by").references(() => users.id),
   // Set when the one-month-before reminder email has gone out, so it sends once.
   reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+  // Exam outcome, recorded by an admin after the voucher is booked. Null until
+  // then. Setting it emails the participant.
+  result: examResultEnum("result"),
+  resultUpdatedAt: timestamp("result_updated_at", { withTimezone: true }),
+  resultUpdatedBy: uuid("result_updated_by").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

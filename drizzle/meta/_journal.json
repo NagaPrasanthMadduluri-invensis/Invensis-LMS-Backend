@@ -281,6 +281,13 @@
       "when": 1793609840205,
       "tag": "0039_sparkling_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793947093234,
+      "tag": "0040_mature_winter_soldier",
+      "breakpoints": true
     }
   ]
 }

@@ -31,7 +31,7 @@ import {
   serializeVoucher,
   vouchersByEnrolmentIds,
 } from "../../lib/vouchers.js";
-import { sendComposedEmail, sendVoucherBookedEmail } from "../../lib/mailer.js";
+import { sendComposedEmail, sendVoucherBookedEmail, sendVoucherResultEmail } from "../../lib/mailer.js";
 import { fetchMailboxFor } from "../../lib/gmail-imap.js";
 import { getDashboard as getSponsorDashboard, listSponsoredLearners } from "../sponsor/sponsor.service.js";
 import {
@@ -2107,6 +2107,73 @@ export async function setExamVoucherBooking(adminId, enrolmentId, body, ip) {
       emailSent = true;
     } catch (err) {
       console.error(`[voucher] confirmation email failed for ${seat.email}: ${err.message}`);
+    }
+  }
+
+  return { voucher: serializeVoucher(row), email_sent: emailSent };
+}
+
+/**
+ * Record (or clear) the exam result for a booked voucher. `result` is 'pass',
+ * 'fail', or null to clear. Only allowed once the voucher is booked. Setting a
+ * result (not clearing) emails the participant — best-effort, so a mail failure
+ * is logged, not fatal. Returns the serialized voucher plus whether mail went out.
+ */
+export async function setExamVoucherResult(adminId, enrolmentId, body, ip) {
+  const result = body?.result ?? null;
+  if (result !== "pass" && result !== "fail" && result !== null) {
+    throw new AppError("result must be 'pass', 'fail', or null", 422);
+  }
+
+  // The voucher must exist and be booked before a result can be recorded.
+  const [existing] = await db
+    .select()
+    .from(examVoucherBookings)
+    .where(eq(examVoucherBookings.enrolmentId, enrolmentId))
+    .limit(1);
+  if (!existing || existing.status !== "booked") {
+    throw new AppError("Book the exam voucher before recording a result", 409);
+  }
+
+  // Resolve the participant (for the email) and course title.
+  const [seat] = await db
+    .select({ name: participants.name, email: participants.email, courseName: trainingIds.title })
+    .from(enrolments)
+    .innerJoin(participants, eq(participants.id, enrolments.participantId))
+    .innerJoin(trainingIds, eq(trainingIds.id, enrolments.trainingId))
+    .where(eq(enrolments.id, enrolmentId))
+    .limit(1);
+  if (!seat) throw new AppError("Enrolment not found", 404);
+
+  const now = new Date();
+  const [row] = await db
+    .update(examVoucherBookings)
+    .set({
+      result,
+      resultUpdatedAt: result === null ? null : now,
+      resultUpdatedBy: result === null ? null : adminId,
+      updatedAt: now,
+    })
+    .where(eq(examVoucherBookings.enrolmentId, enrolmentId))
+    .returning();
+
+  await writeAudit(db, {
+    entityType: "exam_voucher_booking",
+    entityId: enrolmentId,
+    action: result === null ? "exam_result_cleared" : "exam_result_recorded",
+    actorId: adminId,
+    before: { result: existing.result ?? null },
+    after: { result },
+    ipAddress: ip,
+  });
+
+  let emailSent = false;
+  if (result !== null && seat.email) {
+    try {
+      await sendVoucherResultEmail({ name: seat.name, email: seat.email }, { courseName: seat.courseName, result });
+      emailSent = true;
+    } catch (err) {
+      console.error(`[voucher] result email failed for ${seat.email}: ${err.message}`);
     }
   }
 

@@ -159,6 +159,11 @@ export const setExamVoucherSchema = z
     path: ["expires_at"],
   });
 
+// Record (or clear) a booked voucher's exam result. null clears it.
+export const setExamVoucherResultSchema = z.object({
+  result: z.enum(["pass", "fail"]).nullable(),
+});
+
 // Analytics dashboard filters. Every field is optional — an omitted field means
 // "no constraint on this dimension". Empty strings from the query string are
 // coerced to undefined so the frontend can send blank params harmlessly.
